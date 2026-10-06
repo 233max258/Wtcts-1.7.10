@@ -1,0 +1,78 @@
+package com.asdflj.wtct.common.item;
+
+import java.util.Arrays;
+import java.util.List;
+
+import net.minecraft.client.gui.GuiScreen;
+import net.minecraft.client.resources.I18n;
+import net.minecraft.entity.player.EntityPlayer;
+import net.minecraft.item.ItemStack;
+import net.minecraft.nbt.NBTTagCompound;
+import net.minecraft.world.World;
+import net.minecraftforge.common.util.ForgeDirection;
+
+import com.asdflj.wtct.api.Constants;
+import com.asdflj.wtct.common.Config;
+import com.asdflj.wtct.inventory.InventoryHandler;
+import com.asdflj.wtct.inventory.ItemCellLinkInventory;
+import com.asdflj.wtct.inventory.gui.GuiType;
+import com.asdflj.wtct.inventory.item.IItemInventory;
+import com.asdflj.wtct.util.BlockPos;
+import com.asdflj.wtct.util.NameConst;
+
+import appeng.util.Platform;
+
+public abstract class BaseCellItem extends BaseItem implements IItemInventory, IBaseCellItem, IItemInventoryHandler {
+
+    @Override
+    public Object getInventory(ItemStack stack, World world, int x, int y, int z, EntityPlayer player) {
+        return new ItemCellLinkInventory(player.inventory.mainInventory[x], player, x);
+    }
+
+    @Override
+    public ItemStack onItemRightClick(final ItemStack item, final World w, final EntityPlayer player) {
+        if (player.isSneaking()) {
+            NBTTagCompound data = Platform.openNbtData(item);
+            if (data.getBoolean(Constants.LINKED)) {
+                item.setTagCompound(null);
+                player.inventory.setInventorySlotContents(player.inventory.currentItem, item);
+            }
+        } else if (Config.cellLink) {
+            InventoryHandler.openGui(
+                player,
+                w,
+                new BlockPos(player.inventory.currentItem, 0, 0),
+                ForgeDirection.UNKNOWN,
+                this.guiGuiType(item));
+        }
+        return super.onItemRightClick(item, w, player);
+    }
+
+    private GuiType guiGuiType(ItemStack item) {
+        return GuiType.CELL_LINK;
+    }
+
+    @Override
+    protected void addCheckedInformation(ItemStack stack, EntityPlayer player, List<String> lines,
+        boolean displayMoreInfo) {
+        if (GuiScreen.isShiftKeyDown()) {
+            addToolTips(stack, player, lines, displayMoreInfo);
+        } else {
+            lines.add(I18n.format(NameConst.TT_SHIFT_FOR_MORE));
+        }
+    }
+
+    @Override
+    public void addToolTips(ItemStack stack, EntityPlayer player, List<String> lines, boolean displayMoreInfo) {
+        if (!Config.cellLink) {
+            lines.add(I18n.format(NameConst.TT_CELL_LINK_DISABLE));
+            return;
+        }
+        NBTTagCompound data = Platform.openNbtData(stack);
+        if (data.getBoolean(Constants.LINKED)) lines.add(I18n.format(NameConst.TT_LINKED));
+        lines.addAll(
+            Arrays.asList(
+                I18n.format(NameConst.TT_CELL_LINK_DESC)
+                    .split("\\\\n")));
+    }
+}

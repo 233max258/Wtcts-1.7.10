@@ -1,0 +1,15 @@
+{
+  "required": true,
+  "minVersion": "0.8.5-GTNH",
+  "package": "com.asdflj.wtct.coremod.mixin",
+  "refmap": "mixins.wtct.refmap.json",
+  "target": "@env(DEFAULT)",
+  "compatibilityLevel": "JAVA_8",
+  "overwrites": {
+    "conformVisibility": true
+  },
+  "mixins": [
+  ],
+  "client": [],
+  "server": []
+}

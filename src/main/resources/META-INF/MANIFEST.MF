@@ -1,0 +1,4 @@
+Manifest-Version: 1.0
+FMLCorePluginContainsFMLMod: true
+FMLAT: wtct_at.cfg
+FMLCorePlugin: com.asdflj.wtct.coremod.WtctCore

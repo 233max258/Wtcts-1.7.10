@@ -1,0 +1,138 @@
+package com.asdflj.wtct.coremod.mixin.nei;
+
+import static com.asdflj.wtct.nei.NEI_TH_Config.getConfigValue;
+
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.GuiScreen;
+import net.minecraft.item.Item;
+import net.minecraft.item.ItemStack;
+import net.minecraftforge.common.MinecraftForge;
+
+import org.spongepowered.asm.mixin.Mixin;
+import org.spongepowered.asm.mixin.Shadow;
+import org.spongepowered.asm.mixin.injection.At;
+import org.spongepowered.asm.mixin.injection.Inject;
+import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
+
+import com.asdflj.wtct.api.WtctAPI;
+import com.asdflj.wtct.api.adapter.terminal.IGuiCraftAmount;
+import com.asdflj.wtct.api.adapter.terminal.ITerminal;
+import com.asdflj.wtct.client.event.UpdateAmountTextEvent;
+import com.asdflj.wtct.nei.ButtonConstants;
+import com.asdflj.wtct.util.Util;
+
+import appeng.api.implementations.guiobjects.IGuiItemObject;
+import appeng.api.parts.IPart;
+import appeng.api.parts.PartItemStack;
+import appeng.api.storage.data.IAEItemStack;
+import appeng.api.storage.data.IDisplayRepo;
+import appeng.client.gui.AEBaseGui;
+import appeng.client.me.ItemRepo;
+import appeng.container.AEBaseContainer;
+import appeng.core.sync.network.NetworkHandler;
+import appeng.core.sync.packets.PacketMonitorableAction;
+import appeng.helpers.MonitorableAction;
+import appeng.util.Platform;
+import appeng.util.item.AEItemStack;
+import codechicken.nei.NEIClientUtils;
+import codechicken.nei.PanelWidget;
+import codechicken.nei.Widget;
+import codechicken.nei.guihook.IContainerTooltipHandler;
+
+@Mixin(PanelWidget.class)
+public abstract class MixinPanelWidget extends Widget implements IContainerTooltipHandler {
+
+    @Shadow(remap = false)
+    public abstract ItemStack getStackMouseOver(int mousex, int mousey);
+
+    @Shadow(remap = false)
+    public ItemStack draggedStack;
+
+    @Inject(method = "handleClick", at = @At(value = "HEAD"), remap = false, cancellable = true)
+    public void handleClick(int mousex, int mousey, int button, CallbackInfoReturnable<Boolean> cir) {
+        if (button != 2) return;
+        try {
+            ItemStack is = this.getStackMouseOver(mousex, mousey);
+            if (is == null) return;
+            GuiScreen gui = Minecraft.getMinecraft().currentScreen;
+            if (gui instanceof IGuiCraftAmount g) {
+                g.setAmount(Math.max(is.stackSize, 1));
+                draggedStack = null;
+                cir.setReturnValue(true);
+            } else if (gui instanceof AEBaseGui g) {
+                IDisplayRepo repo = Util.getDisplayRepo(g);
+                if (repo == null) return;
+                if (NEIClientUtils.altKey()) {
+                    repo.setSearchString(is.getDisplayName());
+                    Util.setSearchFieldText(g, Platform.getItemDisplayName(is));
+                } else if (g.inventorySlots instanceof AEBaseContainer c) {
+                    MonitorableAction action = null;
+                    if (NEIClientUtils.shiftKey()) {
+                        action = MonitorableAction.PICKUP_OR_SET_DOWN;
+                    } else if (GuiScreen.isCtrlKeyDown()) {
+                        action = MonitorableAction.PICKUP_SINGLE;
+                    } else if (getConfigValue(ButtonConstants.NEI_CRAFT_ITEM) && repo instanceof ItemRepo itemRepo
+                        && canCraftItem(itemRepo, is)) {
+                            is = is.copy();
+                            if (is.stackSize <= 0) {
+                                is.stackSize = 1;
+                            }
+                            if (c.getTarget() instanceof IGuiItemObject o && o.getItemStack() != null
+                                && o.getItemStack()
+                                    .getItem() != null) {
+                                openCraftAmount(
+                                    o.getItemStack()
+                                        .getItem()
+                                        .getClass(),
+                                    c,
+                                    is);
+                            } else if (c.getTarget() instanceof IPart p) {
+                                ItemStack part = p.getItemStack(PartItemStack.Network);
+                                if (part != null && part.getItem() != null) {
+                                    openCraftAmount(
+                                        part.getItem()
+                                            .getClass(),
+                                        c,
+                                        is);
+                                }
+                            }
+                        }
+                    if (action != null) {
+                        c.setTargetStack(AEItemStack.create(is));
+                        final PacketMonitorableAction p = new PacketMonitorableAction(action, -1);
+                        NetworkHandler.instance.sendToServer(p);
+                    }
+                }
+                draggedStack = null;
+                cir.setReturnValue(true);
+            }
+        } catch (Exception ignored) {}
+    }
+
+    private boolean canCraftItem(ItemRepo repo, ItemStack is) {
+        if (repo == null || is == null) return false;
+        final IAEItemStack target = AEItemStack.create(is);
+        if (target == null) return false;
+        for (int i = 0; i < repo.size(); i++) {
+            final IAEItemStack item = repo.getReferenceItem(i);
+            if (item != null && item.isSameType(target)) {
+                return item.isCraftable();
+            }
+        }
+        return false;
+    }
+
+    private void openCraftAmount(Class<? extends Item> o, AEBaseContainer c, ItemStack is) {
+        for (ITerminal terminal : WtctAPI.instance()
+            .terminal()
+            .getTerminalSet()) {
+            if (terminal.getClasses()
+                .contains(o)) {
+                c.setTargetStack(AEItemStack.create(is));
+                terminal.openCraftAmount();
+                MinecraftForge.EVENT_BUS.post(new UpdateAmountTextEvent(is.stackSize));
+                break;
+            }
+        }
+    }
+}

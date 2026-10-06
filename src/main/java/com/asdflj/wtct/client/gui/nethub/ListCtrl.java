@@ -1,0 +1,265 @@
+package com.asdflj.wtct.client.gui.nethub;
+
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.List;
+import java.util.Objects;
+import java.util.regex.Pattern;
+import java.util.stream.Collectors;
+
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.Gui;
+import net.minecraft.client.gui.ScaledResolution;
+import net.minecraft.client.resources.I18n;
+import net.minecraft.util.MathHelper;
+
+import org.lwjgl.input.Mouse;
+import org.lwjgl.opengl.GL11;
+
+import com.asdflj.wtct.common.nethub.IListObject;
+import com.asdflj.wtct.common.nethub.NetHubUtil;
+
+/**
+ * A scrollable list of {@link IListObject}s with an optional filter and scroll bar, clipped to its own rectangle.
+ *
+ * <p>
+ * The control is a bare {@link Gui}, so it cannot render a tooltip itself - the screen that owns it supplies a
+ * {@link TooltipRenderer} instead.
+ */
+public abstract class ListCtrl<T extends IListObject> extends Gui {
+
+    /** Draws the hovered row's tooltip; only a screen can do this, hence the callback. */
+    public interface TooltipRenderer {
+
+        void drawTooltip(List<String> lines, int mouseX, int mouseY);
+    }
+
+    public final int width;
+    public final int height;
+    public final int x;
+    public final int y;
+    public final Minecraft mc;
+    private final int itemHeight;
+    private final Collection<T> items;
+    private final List<IListItem<T>> drawItems = new ArrayList<>();
+    private boolean scrollByItem = false;
+    private boolean scroll = false;
+    private boolean isSelected = false;
+    private String filter = "";
+    private Object selected;
+    private TooltipRenderer tooltipRenderer;
+
+    private int scrollOffset;
+    private int listHeight;
+    private int maxScrollOffset;
+
+    private int scrollBarHeight;
+    private int scrollBarY;
+    private boolean isScrolling;
+
+    private int scrollWidth = 3;
+    private int lastItemsSize = -1;
+    private int lastMouseY;
+
+    public ListCtrl(Minecraft mc, int x, int y, int width, int height, int itemHeight, Collection<T> items) {
+        this.x = x;
+        this.y = y;
+        this.width = width;
+        this.height = height;
+        this.itemHeight = itemHeight == 0 ? 1 : itemHeight;
+        this.items = items;
+        this.mc = mc;
+    }
+
+    public void setScrollByItem(boolean scrollByItem) {
+        this.scrollByItem = scrollByItem;
+    }
+
+    public void setScroll(boolean scroll) {
+        this.scroll = scroll;
+    }
+
+    public void setScrollWidth(int width) {
+        this.scrollWidth = width;
+    }
+
+    public void setIsSelected(boolean isSelected) {
+        this.isSelected = isSelected;
+    }
+
+    public void setSelected(Object selected) {
+        this.selected = selected;
+    }
+
+    public void setScrollOffset(int scrollOffset) {
+        this.scrollOffset = scrollOffset;
+    }
+
+    public void setFilter(String filter) {
+        this.filter = NetHubUtil.escapeRegExp(filter);
+    }
+
+    public void setTooltipRenderer(TooltipRenderer tooltipRenderer) {
+        this.tooltipRenderer = tooltipRenderer;
+    }
+
+    public void draw(int mouseX, int mouseY, float partialTicks) {
+
+        if (this.lastItemsSize != this.items.size()) {
+            this.lastItemsSize = this.items.size();
+            this.refresh();
+        }
+
+        int scaleFactor = new ScaledResolution(mc, mc.displayWidth, mc.displayHeight).getScaleFactor();
+        GL11.glEnable(GL11.GL_SCISSOR_TEST);
+        GL11.glScissor(
+            this.x * scaleFactor,
+            mc.displayHeight - (this.y + this.height) * scaleFactor,
+            this.width * scaleFactor,
+            this.height * scaleFactor);
+        for (IListItem<T> item : this.drawItems) {
+            item.draw(mc, mouseX, mouseY, partialTicks);
+        }
+        GL11.glDisable(GL11.GL_SCISSOR_TEST);
+
+        this.listHeight = (int) items.stream()
+            .filter(
+                n -> Pattern.compile(this.filter)
+                    .matcher(n.getName())
+                    .find())
+            .count() * itemHeight;
+        this.maxScrollOffset = Math.max(this.listHeight - height, 0);
+
+        if (this.scroll) {
+            this.scrollBarHeight = this.height;
+            if (this.maxScrollOffset > 0) {
+                this.scrollBarHeight = (int) ((float) this.height * this.height / this.listHeight);
+                this.scrollBarHeight = Math.max(10, this.scrollBarHeight);
+            }
+            this.scrollBarY = this.y;
+            if (this.maxScrollOffset > 0) {
+                this.scrollBarY += (int) ((float) this.scrollOffset / this.maxScrollOffset
+                    * (this.height - this.scrollBarHeight));
+            }
+            drawRect(
+                this.x + this.width - this.scrollWidth - 1,
+                this.y,
+                this.x + this.width - 1,
+                this.y + this.height,
+                0xFF9C9C9C);
+            drawRect(
+                this.x + this.width - this.scrollWidth - 1,
+                this.scrollBarY,
+                this.x + this.width - 1,
+                this.scrollBarY + this.scrollBarHeight,
+                0xFF373737);
+        }
+
+        if (this.tooltipRenderer == null) return;
+        for (IListItem<T> item : this.drawItems) {
+            if (item.isMouseOver(mouseX, mouseY)) {
+                List<String> tooltip = item.getTooltip();
+                if (tooltip != null && !tooltip.isEmpty()) {
+                    this.tooltipRenderer.drawTooltip(
+                        tooltip.stream()
+                            .map(I18n::format)
+                            .collect(Collectors.toList()),
+                        mouseX,
+                        mouseY);
+                }
+            }
+        }
+    }
+
+    public void refresh() {
+        this.drawItems.clear();
+        int drawSize = this.height / this.itemHeight + 2;
+        List<T> filter = this.items.stream()
+            .filter(
+                n -> Pattern.compile(this.filter)
+                    .matcher(n.getName())
+                    .find())
+            .collect(Collectors.toList());
+        for (int i = 0; i < drawSize; i++) {
+            int index = this.scrollOffset / this.itemHeight + i;
+            if (index >= filter.size()) break;
+            IListItem<T> item = this.getItem(
+                filter.get(index)
+                    .getUuid(),
+                filter.get(index)
+                    .getName(),
+                filter.get(index),
+                this.x,
+                this.y + i * this.itemHeight - this.scrollOffset % this.itemHeight,
+                this.width - (this.scroll ? scrollWidth + 2 : 0),
+                this.itemHeight);
+            if (isSelected) item.setSelected(Objects.equals(this.selected, item.getId()));
+            this.drawItems.add(item);
+        }
+    }
+
+    public void handleMouseInput(int mouseX, int mouseY) {
+        if (mouseX >= this.x && mouseY >= this.y && mouseX < this.x + this.width && mouseY < this.y + this.height) {
+            int mouseWheel = Mouse.getEventDWheel();
+            if (mouseWheel != 0) {
+                this.scrollOffset = MathHelper.clamp_int(
+                    this.scrollOffset - ((int) Math.signum(mouseWheel) * (this.scrollByItem ? this.itemHeight : 3)),
+                    0,
+                    this.maxScrollOffset);
+                this.refresh();
+            }
+        }
+        if (this.isScrolling) {
+            int deltaY = mouseY - this.lastMouseY;
+            int scrollBarMaxY = this.height - this.scrollBarHeight;
+            if (this.maxScrollOffset > 0 && scrollBarMaxY > 0) {
+                float ratio = (float) this.maxScrollOffset / (float) scrollBarMaxY;
+                this.scrollOffset += (int) (deltaY * ratio);
+                this.scrollOffset = MathHelper.clamp_int(this.scrollOffset, 0, this.maxScrollOffset);
+            }
+            this.lastMouseY = mouseY;
+            this.refresh();
+        }
+    }
+
+    protected abstract IListItem<T> getItem(Object id, String text, T o, int x, int y, int width, int height);
+
+    public void mouseClicked(int mouseX, int mouseY, int mouseButton) {
+        if (this.scroll && !this.isScrolling && this.isMouseOverScrollBar(mouseX, mouseY)) {
+            this.lastMouseY = mouseY;
+            this.isScrolling = true;
+        }
+        boolean r = false;
+        for (IListItem<T> item : this.drawItems) {
+            if (item.isMouseOver(mouseX, mouseY)) {
+                item.click();
+                item.playPressSound(this.mc.getSoundHandler());
+                if (isSelected) {
+                    this.setSelected(item.getId());
+                    r = true;
+                }
+            }
+        }
+        if (r) {
+            this.refresh();
+        }
+    }
+
+    public void mouseReleased(int mouseX, int mouseY, int state) {
+        if (this.scroll && this.isScrolling) {
+            this.isScrolling = false;
+        }
+    }
+
+    public void mouseClickMove(int mouseX, int mouseY, int clickedMouseButton, long timeSinceLastClick) {
+
+    }
+
+    private boolean isMouseOverScrollBar(int mouseX, int mouseY) {
+        int scrollLeft = this.x + this.width - this.scrollWidth - 1;
+        int scrollRight = this.x + this.width - 1;
+        int scrollTop = this.scrollBarY;
+        int scrollBottom = this.scrollBarY + this.scrollBarHeight;
+        return mouseX >= scrollLeft && mouseX <= scrollRight && mouseY >= scrollTop && mouseY <= scrollBottom;
+    }
+}

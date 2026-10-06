@@ -1,0 +1,49 @@
+.gradle
+.settings
+/.idea/
+/.vscode/
+/run/
+/build/
+/eclipse/
+.classpath
+.project
+/bin/
+/config/
+/crash-reports/
+/logs/
+options.txt
+/saves/
+usernamecache.json
+banned-ips.json
+banned-players.json
+eula.txt
+ops.json
+server.properties
+servers.dat
+usercache.json
+whitelist.json
+/out/
+*.iml
+*.ipr
+*.iws
+src/main/resources/mixins.*([!.]).json
+*.bat
+*.DS_Store
+!gradlew.bat
+.factorypath
+addon.local.gradle
+addon.local.gradle.kts
+addon.late.local.gradle
+addon.late.local.gradle.kts
+layout.json
+
+# --- below: added for this repository, not part of the GTNH template ---
+# AI assistant working directory. Holds the project's working memory and the
+# scratch space used for bytecode patching / decompiling - hundreds of MB that
+# have no business in a source repository.
+/.workbuddy/
+# Editor state.
+/.trae/
+# Screenshots and animated GIFs inherited from upstream Wtcts (29 MB). This
+# port's README does not use them; drop this line to ship them anyway.
+/blob/
