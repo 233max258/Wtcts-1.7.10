@@ -27,7 +27,13 @@ public class RenderFluidPacketPatternSlot implements ISlotRender {
     public boolean drawSlot(Slot slot, IAEItemStack stack, IGuiDrawSlot draw, boolean display, Runnable baseDraw) {
         if (stack.getItem() instanceof ItemFluidPacket) {
             FluidStack fluidStack = ItemFluidPacket.getFluidStack(stack);
-            if (fluidStack == null || fluidStack.amount <= 0) {
+            // Hand the cell back whenever the fluid cannot be drawn. Claiming the slot only to draw
+            // nothing (no fluid, no amount, or a fluid the block atlas has no sprite for) skips the
+            // vanilla item draw as well and leaves an empty-looking cell - which is what a fluid packet
+            // moved into the player's inventory used to turn its destination cell into. Nothing is lost
+            // by falling back here: ItemFluidPacket has no sprite of its own (its icon is water's), so
+            // the cell shows an item instead of a hole either way.
+            if (fluidStack == null || fluidStack.amount <= 0 || !RenderFluidDrop.canDraw(fluidStack.getFluid())) {
                 return true;
             }
             // ae2fc 的 ItemFluidPacket 没有 item model（其 jar 的 models/item 为空），vanilla 路径画出来

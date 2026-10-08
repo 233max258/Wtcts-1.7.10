@@ -8,8 +8,8 @@ plugins {
 // Format: <major>.<minor>.<revision>-rc<GTNH build>. The rcN segment names the GTNH release this
 // build targets and does NOT move when the code changes - rc1 is GTNH 2.9.0-RC-1, and it stays rc1
 // until we target a different GTNH. Every round of changes instead raises the leading numbers, so the
-// jar name always identifies one exact build: 1.0.6-rc1 -> ... -> 1.0.21-rc1 -> 1.0.22-rc1 -> 1.0.23-rc1 -> ...
-extra["modVersion"] = "1.0.23-rc1"
+// jar name always identifies one exact build: 1.0.6-rc1 -> ... -> 1.0.23-rc1 -> 1.0.24-rc1 -> 1.0.25-rc1 -> ...
+extra["modVersion"] = "1.0.25-rc1"
 
 tasks.withType<JavaCompile>().configureEach {
     options.annotationProcessorPath = configurations.annotationProcessor.get()

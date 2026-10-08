@@ -1,3 +1,11 @@
+# Builds the mod from the tagged commit and attaches the jar to a GitHub Release, so pushing a tag to
+# this repository produces a downloadable build.
+#
+# This file used to call GT New Horizons' reusable release workflow. That one publishes to GTNH's own
+# maven and to Modrinth/CurseForge, and it signs in with the organization's secrets (MAVEN_USER,
+# MAVEN_PASSWORD, MODRINTH_TOKEN, CURSEFORGE_TOKEN) - none of which exist on a personal repository, and
+# none of which would put the jar on a Release here even if they did. The release this repository wants
+# is the jar on its own tag, which the built-in GITHUB_TOKEN can do on its own.
 
 name: Release tagged build
 
@@ -9,6 +17,69 @@ permissions:
   contents: write
 
 jobs:
-  release-tags:
-    uses: GTNewHorizons/GTNH-Actions-Workflows/.github/workflows/release-tags.yml@master
-    secrets: inherit
+  release:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout mod repo
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          submodules: recursive
+
+      # The build asks for more than one JDK: the GTNH toolchain, plus whatever
+      # gradle/gradle-daemon-jvm.properties names for the Gradle daemon (25 in this project, which
+      # enableModernJavaSyntax = jvmDowngrader builds against and then downgrades).
+      - name: Determine JDK versions
+        id: list-jdk-versions
+        shell: bash
+        run: |
+          (
+            echo 'java-versions<<EOF'
+            echo 8
+            echo 17
+            echo 21
+            if [[ -f gradle/gradle-daemon-jvm.properties ]]; then
+              yq -pprops -oprops '.toolchainVersion' gradle/gradle-daemon-jvm.properties
+            fi
+            echo EOF
+          ) | tee -a "${GITHUB_OUTPUT}"
+
+      - name: Set up JDK versions
+        uses: actions/setup-java@v5
+        with:
+          java-version: ${{ steps.list-jdk-versions.outputs.java-versions }}
+          distribution: 'zulu'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v5
+        with:
+          validate-wrappers: true
+
+      - name: Grant execute permission for gradlew
+        run: chmod +x gradlew
+
+      - name: Setup the workspace
+        run: ./gradlew --build-cache --stacktrace setupCIWorkspace
+
+      - name: Build the mod
+        run: ./gradlew --build-cache --stacktrace assemble -x test
+
+      - name: Publish the release with the jar
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+          ls -l build/libs
+          mapfile -t jars < <(find build/libs -maxdepth 1 -type f -name '*.jar' | sort)
+          if (( ${#jars[@]} == 0 )); then
+            echo "::error::the build produced no jar in build/libs"
+            exit 1
+          fi
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" "${jars[@]}" --clobber
+          else
+            gh release create "$tag" "${jars[@]}" --title "$tag" --generate-notes
+          fi
+          gh release view "$tag" --json url,tagName,assets --jq '.'

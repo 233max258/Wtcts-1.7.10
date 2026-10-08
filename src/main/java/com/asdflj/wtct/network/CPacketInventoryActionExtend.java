@@ -158,8 +158,10 @@ public class CPacketInventoryActionExtend implements IMessage {
         }
 
         /**
-         * Where the terminal sits, as a coordinate the GUI factory can open. The packet carries the <em>hotbar</em>
-         * index (the gesture needs an empty hand, so that slot is empty and useless), while opening a GUI is
+         * Where the terminal sits, as a coordinate the GUI factory can open. The packet carries the slot the
+         * stack is to be dropped into (which says nothing about where the terminal is - it used to be the
+         * hotbar slot the gesture was made from, and it is now simply the first empty slot the hand could not
+         * provide), while opening a GUI is
          * addressed by the host's own coordinate - see {@code ItemGuiFactory}, which reads it back through the
          * bridge-aware helper, so a terminal worn in a Baubles slot is addressable too (it has no main-inventory
          * index, and the plain scan this used to do answered -1 for it, which is why the craft half of the

@@ -23,6 +23,8 @@ public enum Mods implements IMod, ITargetMod {
     ADVENTURE_BACKPACK("adventurebackpack"),
     ASPECT_RECIPE_INDEX("aspectrecipeindex"),
     BACKPACK("Backpack"),
+    /** 1.7.10's offhand: Backhand appends it as one extra main-inventory slot (see the terminal's offhand cell). */
+    BACKHAND("backhand"),
     BAUBLES("Baubles", () -> Loader.isModLoaded("Baubles") || Loader.isModLoaded("Baubles|Expanded"), null),
     BETTER_P2P("betterp2p"),
     BLOCK_RENDERER("blockrenderer6343"),

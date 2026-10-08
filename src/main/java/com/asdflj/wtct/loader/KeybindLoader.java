@@ -57,15 +57,23 @@ public class KeybindLoader implements Runnable {
         if (Minecraft.getMinecraft().currentScreen != null) return;
         EntityClientPlayerMP p = Minecraft.getMinecraft().thePlayer;
         // middle click
-        if (Mouse.isButtonDown(2) && !p.capabilities.isCreativeMode && p.inventory.getCurrentItem() == null) {
+        // The gesture asks the network for the block under the crosshair, and no longer insists on an
+        // empty hand: carrying something used to make the click a silent no-op, so the block you were
+        // looking at could not be ordered - nor offered for crafting - unless you first emptied your
+        // hand. What the request actually needs is somewhere to put the stack, which is what
+        // findReceivingSlot answers: the hand when it is free (unchanged for a player who is not
+        // holding anything), otherwise the first empty slot. A full inventory still has nowhere to put
+        // it, and the click stays a no-op there.
+        if (Mouse.isButtonDown(2) && !p.capabilities.isCreativeMode) {
             // request item
             ItemStack block = getTargetBlock(p.getEntityWorld(), p);
-            if (block != null) {
-                if (Util.findItemStack(p, block) == -1) {
+            if (block != null && Util.findItemStack(p, block) == -1) {
+                int slot = Util.findReceivingSlot(p);
+                if (slot >= 0) {
                     Wtct.proxy.netHandler.sendToServer(
                         new CPacketInventoryActionExtend(
                             InventoryActionExtend.REQUEST_ITEM,
-                            p.inventory.currentItem,
+                            slot,
                             0,
                             AEItemStack.create(block)));
                 }

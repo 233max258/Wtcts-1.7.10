@@ -261,6 +261,37 @@ public class Util {
         return -1;
     }
 
+    /**
+     * Where the middle-click gesture's stack should land: the held hotbar slot when the hand is free,
+     * otherwise the first empty main-inventory slot, or -1 when there is nowhere to put it.
+     *
+     * <p>
+     * The held slot is preferred because that is where the vanilla gesture would have put the block, and
+     * where the empty-hand-only version of this feature always put it - a player with a free hand sees
+     * no change. The first-empty fallback is what lets the gesture work while carrying something: the
+     * request is delivered by filling one slot, and the server only fills an empty one, so the hand can
+     * no longer be the only answer.
+     *
+     * <p>
+     * Vanilla's 36 slots only. With Backhand loaded the array is one longer, and that extra slot is the
+     * player's offhand: an order must not quietly drop a stack into the hand the player is not looking
+     * at.
+     */
+    public static int findReceivingSlot(EntityPlayer player) {
+        final ItemStack[] main = player.inventory.mainInventory;
+        final int usable = Math.min(main.length, 36);
+        final int held = player.inventory.currentItem;
+        if (held >= 0 && held < usable && main[held] == null) {
+            return held;
+        }
+        for (int x = 0; x < usable; x++) {
+            if (main[x] == null) {
+                return x;
+            }
+        }
+        return -1;
+    }
+
     public static long genSingularityFreq() {
         long freq = (new Date()).getTime() * 100 + (randTickSeed) % 100;
         randTickSeed++;

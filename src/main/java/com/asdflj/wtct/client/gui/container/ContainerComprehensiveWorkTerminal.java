@@ -115,6 +115,14 @@ public class ContainerComprehensiveWorkTerminal extends BasePatternContainerMoni
      */
     public static final int CACHE_X = 176;
     public static final int CACHE_Y = 145;
+    /**
+     * WCWT's offhand cell ({@code AE2WTLIB_OFFHAND} in the screen JSON: left 149, bottom 174, which the
+     * 288px reference layout turns into y = 288 - 174 = 114). It sits directly under the manual
+     * crafting output at (149, 92) - four pixels of gap - and the sheet already bakes its empty frame,
+     * so adding the slot is all the cell needs.
+     */
+    public static final int OFFHAND_X = 149;
+    public static final int OFFHAND_Y = 114;
 
     // ---------------------------------------------------------------------------------------------
     // Upgrade panel (WCWT's `scrollingUpgrades` / WTLib's ScrollingUpgradesPanel). WCWT anchors it
@@ -214,6 +222,11 @@ public class ContainerComprehensiveWorkTerminal extends BasePatternContainerMoni
         this.setupCraftingGrid();
         this.setupArmorSlots();
         this.bindPlayerInventory(ip, 14, 0);
+        // Appended last on purpose: every slot added before the player inventory would shift the
+        // container index of each of its slots, which the locked-slot bookkeeping and the shift-click
+        // routing both key off. The offhand renders at its own coordinates, so the order it is added in
+        // does not matter to the screen.
+        this.setupOffhandSlot(ip);
         // The pattern management area lists the network's pattern providers through AE2's own
         // interface terminal, exactly like the wireless dual-interface terminal does: this terminal's
         // host is a WirelessDualInterfaceTerminalInventory, which implements IInterfaceTerminal.
@@ -953,13 +966,15 @@ public class ContainerComprehensiveWorkTerminal extends BasePatternContainerMoni
 
     /**
      * WCWT's armor column (AE2WTLIB_HELMET..BOOTS): the player's real armor at x=8, texture Y
-     * 65..119 (18px pitch; JSON bottoms 223/205/187/169). No offhand on 1.7.10.
+     * 65..119 (18px pitch; JSON bottoms 223/205/187/169). The offhand is its own cell further right -
+     * see {@link #setupOffhandSlot}.
      */
     private void setupArmorSlots() {
         final InventoryPlayer inv = this.getPlayerInv();
         for (int i = 0; i < 4; i++) {
-            // InventoryPlayer's IInventory view keeps the armor in its last four indices:
-            // 39=helm, 38=chest, 37=legs, 36=boots - same indices WCWT's menu uses.
+            // InventoryPlayer's IInventory view keeps the armor in its last four indices, helm first.
+            // Their absolute numbers depend on how many slots precede the armor: 39..36 vanilla, 40..37
+            // once Backhand has grown the main array by one, which is why they are counted from the end.
             this.addSlotToContainer(new SlotPlayerArmor(inv, inv.getSizeInventory() - 1 - i, 8, 65 + i * 18, i));
         }
     }
@@ -989,6 +1004,77 @@ public class ContainerComprehensiveWorkTerminal extends BasePatternContainerMoni
         public int getSlotStackLimit() {
             return 1;
         }
+    }
+
+    /**
+     * WCWT's offhand cell (AE2WTLIB_OFFHAND), at whatever {@link #offhandSlotIndex} says the offhand
+     * lives at. Nothing is added when Backhand is absent: 1.7.10 has no offhand of its own, and the
+     * index would then point at the last hotbar slot, putting a second, bogus "hand" in the window.
+     */
+    private void setupOffhandSlot(final InventoryPlayer inv) {
+        final int index = offhandSlotIndex(inv);
+        if (index < 0) {
+            return;
+        }
+        this.addSlotToContainer(new SlotPlayerOffhand(inv, index));
+    }
+
+    /**
+     * The offhand's index in the player inventory, or -1 when there is no offhand to point at.
+     *
+     * <p>
+     * Backhand implements 1.7.10's offhand by growing {@code mainInventory} by one slot on construction
+     * and parking the offhand in the index it appended (it records {@code mainInventory.length} before
+     * the growth, so the offhand ends up as the array's last element, and {@code getStackInSlot} reaches
+     * it because the array is longer than vanilla's 36). Only that length is read here - no Backhand
+     * class is named and no dependency is needed to build - so the test is simply "is the array longer
+     * than vanilla's". A server and a client that disagree about Backhand would disagree about the slot
+     * list too, but that is already true of every mod whose presence adds slots.
+     */
+    private static int offhandSlotIndex(final InventoryPlayer inv) {
+        final ItemStack[] main = inv.mainInventory;
+        return main.length > 36 ? main.length - 1 : -1;
+    }
+
+    /**
+     * The player's real offhand (WCWT's {@code OffhandSlot}): an ordinary slot holding one stack, like
+     * the hand it mirrors - no armour rule, no stack limit of its own.
+     *
+     * <p>
+     * {@code isItemValid} only rejects the empty stack, which is what makes the cell accept anything the
+     * player puts there; returning false for a non-empty stack would turn the cell into a read-only
+     * display of an offhand nothing could ever be moved into.
+     */
+    public final class SlotPlayerOffhand extends AppEngSlot {
+
+        SlotPlayerOffhand(final IInventory inv, final int index) {
+            super(inv, index, OFFHAND_X, OFFHAND_Y);
+        }
+
+        @Override
+        public boolean isItemValid(final ItemStack stack) {
+            return stack != null && stack.getItem() != null;
+        }
+    }
+
+    /**
+     * Keeps the offhand out of shift-click routing, the way WCWT and vanilla both do: a stack moved out
+     * of the network or out of the player's inventory may not be dropped into the offhand by accident -
+     * the cell only changes by hand.
+     *
+     * <p>
+     * {@code AEBaseContainer} gathers shift-click destinations as "every {@code AppEngSlot} on the same
+     * side that accepts the stack", which would sweep the offhand in along with the rest of the player's
+     * slots. The armour cells are deliberately left in that list: shift-clicking armour into them is how
+     * a player equips it, and the reference keeps them transferable for the same reason. Moving a stack
+     * <em>out</em> of the offhand is untouched - that direction runs through the clicked slot, not
+     * through this list.
+     */
+    @Override
+    public List<AppEngSlot> getValidDestinationSlots(final boolean isPlayerSideSlot, final ItemStack stackInSlot) {
+        final List<AppEngSlot> slots = super.getValidDestinationSlots(isPlayerSideSlot, stackInSlot);
+        slots.removeIf(s -> s instanceof SlotPlayerOffhand);
+        return slots;
     }
 
     /**
