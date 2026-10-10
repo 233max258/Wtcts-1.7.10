@@ -98,12 +98,12 @@ public class PatternTerminalRecipeTransferHandler implements IOverlayHandler {
                             List<OrderStack<?>> in = new ArrayList<>();
                             List<OrderStack<?>> out = new ArrayList<>();
                             in.add(new OrderStack<>(slotItem, 0));
-                            // Cycling a fluid keeps the number the cell was asking for; the picker
-                            // offers the recipe's own display item, so the cell is built here, on the
-                            // screen, where a fluid can be read out of that display item.
+                            // Cycling a fluid moves the number to the one the picked fluid asks for;
+                            // the picker offers the recipe's own display item, so the cell is built
+                            // here, on the screen, where a fluid can be read out of that display item.
                             out.add(
                                 new OrderStack<>(
-                                    ContainerComprehensiveWorkTerminal.cellKeepingAmount(slotItem, result),
+                                    ContainerComprehensiveWorkTerminal.cellForPickedIngredient(slotItem, result),
                                     0));
                             Wtct.proxy.netHandler.sendToServer(
                                 new CPacketTransferRecipe(

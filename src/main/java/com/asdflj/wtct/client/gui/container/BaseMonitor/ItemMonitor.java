@@ -183,6 +183,8 @@ public class ItemMonitor implements IMEMonitorHandlerReceiver<IAEItemStack>, IPr
     @Override
     public void queueInventory(ICrafting c) {
         if (Platform.isServer() && c instanceof EntityPlayer && this.itemMonitor != null) {
+            // TEMP DIAGNOSTIC (1.0.35, remove once the terminal-open delay is pinned down).
+            final long t0 = System.currentTimeMillis();
             final IItemList<IAEItemStack> monitorCache = this.itemMonitor instanceof RefreshableStorageMonitor refreshable
                 ? refreshable.refreshExternalChanges(null, true)
                 : this.itemMonitor.getStorageList();
@@ -192,9 +194,17 @@ public class ItemMonitor implements IMEMonitorHandlerReceiver<IAEItemStack>, IPr
                 fluidHandler(is.copy());
                 toSend.add(is);
             }
+            final long t1 = System.currentTimeMillis();
             SPacketMEItemInvUpdate piu = new SPacketMEItemInvUpdate();
             piu.addAll(toSend);
             Wtct.proxy.netHandler.sendTo(piu, (EntityPlayerMP) c);
+            cpw.mods.fml.common.FMLLog.info(
+                "[wtct-diag] server queueInventory items=%d build=%dms t=%d thread=%s",
+                toSend.size(),
+                t1 - t0,
+                t0,
+                Thread.currentThread()
+                    .getName());
         }
     }
 

@@ -190,7 +190,10 @@ public class ChannelLoader implements Runnable {
         "SPacketSetItemName",
         "SPacketStringUpdate",
         "SPacketSwitchBack",
-        "SPacketTypeFilter");
+        "SPacketTypeFilter",
+        // Appended rather than inserted alphabetically: the discriminator is a packet's index in this
+        // table, so a new entry at the end leaves every existing packet on the id it already had.
+        "CPacketInventoryRequest");
 
     private static int discriminator(final String packetName) {
         final String simple = packetName.substring(packetName.lastIndexOf('.') + 1);

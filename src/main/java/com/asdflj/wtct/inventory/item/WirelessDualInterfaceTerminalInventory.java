@@ -147,6 +147,12 @@ public class WirelessDualInterfaceTerminalInventory extends WirelessTerminal imp
         }
         if (data.hasKey("patternManagementExpanded")) {
             this.setPatternManagementExpanded(data.getBoolean("patternManagementExpanded"));
+            // Diagnostic: shows what the terminal item actually carried when the screen was built.
+            // Remove once the reopen behaviour is settled.
+            cpw.mods.fml.common.FMLLog
+                .info("[wtct] terminal item read back management-expand = %s", this.patternManagementExpanded);
+        } else {
+            cpw.mods.fml.common.FMLLog.info("[wtct] terminal item carried no management-expand key");
         }
         this.setPrioritization(data.getBoolean("priorization"));
         this.setInverted(data.getBoolean("inverted"));
@@ -403,8 +409,48 @@ public class WirelessDualInterfaceTerminalInventory extends WirelessTerminal imp
             final ItemStack is = inv.getStackInSlot(1);
 
             if (is != null && is.getItem() instanceof final ICraftingPatternItem craftingPatternItem) {
+                if (appeng.util.Platform.isClient()) {
+                    // The client only needs the four GUI flags. AE2's getPatternForItem builds the whole
+                    // CraftingPattern (an uncached, roughly quadratic fuzzy pre-computation over every
+                    // ingredient) and this very method fires from the container's own slot sync the
+                    // moment the terminal opens - on the client's main thread, which is the ~0.5s the
+                    // terminal spent frozen whenever an encoded pattern sat in the encoding area. The
+                    // cells themselves reach the client through that same sync, so the flags are read
+                    // straight from the pattern's own NBT instead (the same values AE2 encoded there).
+                    final NBTTagCompound tag = is.getTagCompound();
+                    if (tag != null) {
+                        this.setCraftingRecipe(tag.getBoolean("crafting"));
+                        this.setSubstitution(tag.getBoolean("substitute"));
+                        this.setBeSubstitute(tag.getBoolean("beSubstitute"));
+                        int inputsCount = 0;
+                        int outputCount = 0;
+                        final List<List<ItemStack>> cells = com.asdflj.wtct.util.PatternScaling
+                            .readPatternCells(is);
+                        if (cells != null) {
+                            for (final ItemStack cell : cells.get(0)) {
+                                if (cell != null) {
+                                    inputsCount++;
+                                }
+                            }
+                            for (final ItemStack cell : cells.get(1)) {
+                                if (cell != null) {
+                                    outputCount++;
+                                }
+                            }
+                        }
+                        this.setInverted(inputsCount <= 8 && outputCount > 8);
+                        this.setActivePage(0);
+                    }
+                    return;
+                }
+                // TEMP DIAGNOSTIC (1.0.38, remove once the terminal-open delay is pinned down).
+                final long diagT0 = System.currentTimeMillis();
                 final ICraftingPatternDetails details = craftingPatternItem
                     .getPatternForItem(is, this.getActionableNode().getWorld());
+                cpw.mods.fml.common.FMLLog.info(
+                    "[wtct-diag] server pattern decode took %dms t=%d thread=%s",
+                    System.currentTimeMillis() - diagT0, diagT0, Thread.currentThread()
+                        .getName());
 
                 if (details != null) {
                     final IAEItemStack[] inItems = details.getInputs();

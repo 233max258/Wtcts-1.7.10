@@ -903,6 +903,10 @@ public class GuiComprehensiveWorkTerminal extends GuiMonitor implements IInterfa
 
         repositionFixedSlots();
         repositionPlayerSlots();
+        // Force the encoding area to be re-placed: initGui can run again on the same instance (returning
+        // from a NEI overlay or a sub-screen), and the early-out in layoutPatternArea would otherwise
+        // keep whatever positions the previous pass left behind.
+        this.patternAreaLaidOut = false;
         // Positions the encoding area for the current mode (and the tabs with it).
         updateModeTabs();
         // Vanilla text fields blink their caret from this counter; the management fields need it too.
@@ -1168,6 +1172,17 @@ public class GuiComprehensiveWorkTerminal extends GuiMonitor implements IInterfa
     private void layoutPatternArea() {
         final boolean crafting = this.monitorableContainer.craftingMode;
         final int scroll = crafting ? 0 : this.encScroll;
+        final int bottom = this.bottomStartRel();
+        // This runs from the per-frame pass as well as from the wheel and from initGui. Re-placing the
+        // whole area only matters when one of the inputs the placement is built from actually moved -
+        // the walk itself, which rewrites every encoding cell's position, was the stutter. Nothing
+        // below can change on its own: the slot arrays only swap with the mode, and the mode is part
+        // of the key.
+        if (this.patternAreaLaidOut && crafting == this.laidOutCrafting
+            && scroll == this.laidOutScroll
+            && bottom == this.laidOutBottomStart) {
+            return;
+        }
         // WCWT offsets the crafting matrix 9px left of the processing input column (ENC_CRAFT_X).
         final int inputX = crafting ? ENC_CRAFT_X : ENC_MATRIX_X;
 
@@ -1195,7 +1210,17 @@ public class GuiComprehensiveWorkTerminal extends GuiMonitor implements IInterfa
         if (this.encScroll < 0) {
             this.encScroll = 0;
         }
+        this.patternAreaLaidOut = true;
+        this.laidOutCrafting = crafting;
+        this.laidOutScroll = crafting ? 0 : this.encScroll;
+        this.laidOutBottomStart = bottom;
     }
+
+    /** The inputs {@link #layoutPatternArea} last placed the area with; see its early-out. */
+    private boolean patternAreaLaidOut;
+    private boolean laidOutCrafting;
+    private int laidOutScroll;
+    private int laidOutBottomStart = Integer.MIN_VALUE;
 
     /** The encoding scrollbar belongs to processing mode and only shows when rows are hidden. */
     private boolean isEncScrollbarVisible() {
@@ -1319,6 +1344,9 @@ public class GuiComprehensiveWorkTerminal extends GuiMonitor implements IInterfa
      */
     @Override
     public void drawScreen(final int mouseX, final int mouseY, final float partialTicks) {
+        // TEMP DIAGNOSTIC (1.0.37, remove once the terminal-open delay is pinned down).
+        final boolean diag = this.diagFrames < 30;
+        final long diagT0 = System.currentTimeMillis();
         final TerminalFontSize configured = AEConfig.instance.getTerminalFontSize();
         final boolean lend = this.bigCounts() && configured != TerminalFontSize.LARGE;
         if (lend) {
@@ -1329,6 +1357,28 @@ public class GuiComprehensiveWorkTerminal extends GuiMonitor implements IInterfa
         } finally {
             if (lend) {
                 AEConfig.instance.settings.putSetting(Settings.TERMINAL_FONT_SIZE, configured);
+            }
+            if (diag) {
+                cpw.mods.fml.common.FMLLog.info(
+                    "[wtct-diag] client drawScreen frame=%d took=%dms t=%d",
+                    this.diagFrames,
+                    System.currentTimeMillis() - diagT0,
+                    diagT0);
+                this.diagFrames++;
+            }
+            // TEMP DIAGNOSTIC (1.0.41, remove with the rest): beyond the first 30 frames a running
+            // frame summary, so a steady state that is merely slow shows up too.
+            final long diagFrameMs = System.currentTimeMillis() - diagT0;
+            this.diagAllFrames++;
+            this.diagAllTotal += diagFrameMs;
+            if (diagFrameMs > this.diagAllMax) this.diagAllMax = diagFrameMs;
+            if (this.diagAllFrames % 100 == 0) {
+                cpw.mods.fml.common.FMLLog.info(
+                    "[wtct-diag] client frame summary frames=%d avg=%dms max=%dms t=%d",
+                    this.diagAllFrames,
+                    this.diagAllTotal / this.diagAllFrames,
+                    this.diagAllMax,
+                    diagT0);
             }
         }
     }
@@ -1919,7 +1969,13 @@ public class GuiComprehensiveWorkTerminal extends GuiMonitor implements IInterfa
     private void repositionFixedSlots() {
         for (final Object o : this.inventorySlots.inventorySlots) {
             if (o instanceof final AppEngSlot s && !(s instanceof SlotPlayerInv)
-                && !(s instanceof SlotPlayerHotBar)) {
+                && !(s instanceof SlotPlayerHotBar)
+                // The encoding cells and the pattern cache are placed by layoutPatternArea /
+                // layoutPatternCache; their container-side Y is a shared reference (every encoding
+                // input is built with y=72), so mapping them all through getY() would collapse the
+                // whole column onto one row - items piling up on top of each other and the rest of
+                // the rows going blank. Leave them to the layout pass.
+                && !this.monitorableContainer.isEncodingAreaSlot(s)) {
                 s.yDisplayPosition = bottomStartRel() + (s.getY() - REF_BOTTOM_TOP);
             }
         }
@@ -2171,6 +2227,9 @@ public class GuiComprehensiveWorkTerminal extends GuiMonitor implements IInterfa
 
     @Override
     public void drawFG(final int offsetX, final int offsetY, final int mouseX, final int mouseY) {
+        // TEMP DIAGNOSTIC (1.0.37, remove once the terminal-open delay is pinned down).
+        final boolean diag = this.diagFgs < 3;
+        final long diagT0 = diag ? System.currentTimeMillis() : 0;
         // WCWT's screen JSON titles the screen "comprehensive_work_area" (its terminal item name) in the
         // header. Left 8 of the raw panel would sit under the sidebar's plates, so the text starts just
         // past them - in the reference screenshot the full title is visible right of the toolbar.
@@ -2222,6 +2281,14 @@ public class GuiComprehensiveWorkTerminal extends GuiMonitor implements IInterfa
         // Same reason as in drawBG: the tooltip's gradient rects leave a dark glColor behind, and
         // whatever draws next (NEI included) would inherit it.
         GL11.glColor4f(1.0F, 1.0F, 1.0F, 1.0F);
+        if (diag) {
+            cpw.mods.fml.common.FMLLog.info(
+                "[wtct-diag] client drawFG call=%d took=%dms t=%d",
+                this.diagFgs,
+                System.currentTimeMillis() - diagT0,
+                diagT0);
+            this.diagFgs++;
+        }
     }
 
     // ---------------------------------------------------------------------------------------------
@@ -2692,7 +2759,7 @@ public class GuiComprehensiveWorkTerminal extends GuiMonitor implements IInterfa
         if (stack == null || slot.xDisplayPosition < 0 || slot.yDisplayPosition < 0) {
             return;
         }
-        if (!this.hasCraftablePattern(stack)) {
+        if (!this.slotCraftable(slot, stack)) {
             return;
         }
         // Same badge the reference mod stamps on pattern slots (see RenderPatternSlotFake): the
@@ -2727,6 +2794,38 @@ public class GuiComprehensiveWorkTerminal extends GuiMonitor implements IInterfa
      * exactly the lookup the recipe overlay's blue runs on, so the marker shows wherever the overlay
      * proves the item craftable - and the two can never disagree about the same cell.
      */
+    /**
+     * The craftable-badge answer for one cell, memoised.
+     *
+     * <p>
+     * The badge is stamped in the per-frame pass, and answering the question means walking the network's
+     * whole item list - twice, once as an item and once as the fluid it stands for - for every encoding
+     * cell: thirty-odd cells against a few thousand stacks, every frame. The answer only changes when the
+     * cell's contents or the network's list do, so it is remembered against the exact stack it was worked
+     * out from, and the whole cache is dropped whenever either of those arrives.
+     */
+    private boolean slotCraftable(final SlotFake slot, final ItemStack stack) {
+        final CachedCraftable cached = this.craftableMarks.get(slot);
+        if (cached != null && ItemStack.areItemStacksEqual(cached.stack, stack)) {
+            return cached.craftable;
+        }
+        final boolean craftable = this.hasCraftablePattern(stack);
+        this.craftableMarks.put(slot, new CachedCraftable(stack.copy(), craftable));
+        return craftable;
+    }
+
+    /** One cell's remembered badge answer; the stack it was worked out from is the key. */
+    private static final class CachedCraftable {
+
+        private final ItemStack stack;
+        private final boolean craftable;
+
+        CachedCraftable(final ItemStack stack, final boolean craftable) {
+            this.stack = stack;
+            this.craftable = craftable;
+        }
+    }
+
     private boolean hasCraftablePattern(final ItemStack stack) {
         if (this.craftableKeys.contains(craftableKey(stack))) {
             return true;
@@ -3057,6 +3156,21 @@ public class GuiComprehensiveWorkTerminal extends GuiMonitor implements IInterfa
     /** The craftable item keys of the network's storage list, refreshed a few times a second. */
     private Set<Integer> craftableKeys = new java.util.HashSet<>();
 
+    /**
+     * The badge answers already worked out, keyed by the cell they belong to. Dropped whenever the
+     * network's storage list or its craftable-key set arrives - the two things a remembered answer can
+     * be invalidated by; see {@link #slotCraftable}.
+     */
+    private final java.util.IdentityHashMap<SlotFake, CachedCraftable> craftableMarks = new java.util.IdentityHashMap<>();
+
+    // TEMP DIAGNOSTIC counters (1.0.37, remove once the terminal-open delay is pinned down).
+    private int diagFrames;
+    private int diagAllFrames;
+    private long diagAllTotal;
+    private long diagAllMax;
+    private int diagBgs;
+    private int diagFgs;
+
     /** Server push (SPacketCraftableKeys): the network's complete craftable-key set. */
     public void postCraftableKeys(final int[] keys) {
         final Set<Integer> received = new java.util.HashSet<>();
@@ -3064,6 +3178,7 @@ public class GuiComprehensiveWorkTerminal extends GuiMonitor implements IInterfa
             received.add(key);
         }
         this.craftableKeys = received;
+        this.craftableMarks.clear();
     }
 
     /** The network's craftable keys as pushed by the container - the hammer preview reads this. */
@@ -3282,6 +3397,9 @@ public class GuiComprehensiveWorkTerminal extends GuiMonitor implements IInterfa
 
     @Override
     public void drawBG(int offsetX, int offsetY, int mouseX, int mouseY) {
+        // TEMP DIAGNOSTIC (1.0.37, remove once the terminal-open delay is pinned down).
+        final boolean diag = this.diagBgs < 3;
+        final long diagT0 = diag ? System.currentTimeMillis() : 0;
         // Re-place the cache slots from the current state, before anything draws. This has to happen
         // here and every frame, not just when the enlargement switch flips: the slots are positioned
         // by their xDisplayPosition/yDisplayPosition, which vanilla consumes when it renders them
@@ -3392,6 +3510,12 @@ public class GuiComprehensiveWorkTerminal extends GuiMonitor implements IInterfa
         // without resetting it, so the leftover colour dims everything it draws. Hand control on
         // with a clean state instead.
         GL11.glColor4f(1.0F, 1.0F, 1.0F, 1.0F);
+        if (diag) {
+            cpw.mods.fml.common.FMLLog.info(
+                "[wtct-diag] client drawBG call=%d took=%dms t=%d",
+                this.diagBgs, System.currentTimeMillis() - diagT0, diagT0);
+            this.diagBgs++;
+        }
     }
 
     /**
@@ -3501,6 +3625,8 @@ public class GuiComprehensiveWorkTerminal extends GuiMonitor implements IInterfa
         }
         this.repo.updateView();
         this.setScrollBar();
+        // The list just moved under the badges: every remembered answer may be stale now.
+        this.craftableMarks.clear();
     }
 
     // =============================================================================================

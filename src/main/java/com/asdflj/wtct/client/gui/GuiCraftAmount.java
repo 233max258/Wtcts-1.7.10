@@ -49,6 +49,9 @@ public class GuiCraftAmount extends GuiAmount implements IVirtualSlotHolder {
                 CraftingMode.STANDARD));
         this.amountBox.setText("1");
         this.amountBox.setCursorPositionEnd();
+        // Same as GuiWcwtAmount: the dialog is opened to type a new amount, so the default comes up
+        // selected - without it the digits land after the "1" and a typed 64 reads back as 164.
+        this.amountBox.setSelectionPos(0);
     }
 
     @Override
@@ -122,5 +125,6 @@ public class GuiCraftAmount extends GuiAmount implements IVirtualSlotHolder {
     public void setAmount(int amount) {
         this.amountBox.setText(String.valueOf(amount));
         this.amountBox.setCursorPositionEnd();
+        this.amountBox.setSelectionPos(0);
     }
 }

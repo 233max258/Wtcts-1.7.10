@@ -34,10 +34,22 @@ public class ContainerCraftConfirm extends appeng.container.implementations.Cont
         }
     }
 
+    /**
+     * Every job this terminal starts is asked to "follow", whatever AE2 passed in.
+     *
+     * <p>
+     * AE2 hands the completion notice only to the players on the CPU's following list, and the plain start
+     * - a manual click on Start, or this screen's Shift auto-start, both of which go through the no-argument
+     * {@code startJob()} and pass {@code false} - therefore finishes in silence; only AE2's Ctrl auto-start
+     * announces itself. A player sitting on this screen has just watched the plan being worked out and is
+     * exactly who wants to hear that the network finished it, so the flag is ignored here and the job always
+     * follows. The no-argument entry point is deliberately left to AE2, because this mod pins the crafted
+     * item from an injection into it.
+     */
     @Override
     public void startJob(final boolean followCraft) {
         applyFollowUps();
-        super.startJob(followCraft);
+        super.startJob(true);
     }
 
     /**

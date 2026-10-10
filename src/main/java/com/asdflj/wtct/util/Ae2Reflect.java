@@ -55,6 +55,7 @@ public class Ae2Reflect {
     private static final Field fContainerInterfaceTerminal_trackedById;
     private static final Field fContainerInterfaceTerminal_dirty;
     private static final Field fContainerInterfaceTerminal_isDirty;
+    private static final Field fContainerInterfaceTerminal_forceNextUpdate;
     private static final Field fInvTracker_patterns;
     private static final Field fInvTracker_id;
     private static final Field fInvTracker_name;
@@ -86,6 +87,10 @@ public class Ae2Reflect {
         // ever reach the client when AE2's own slot actions were not the ones that changed them.
         fContainerInterfaceTerminal_dirty = field(INTERFACE_TERMINAL, "dirty");
         fContainerInterfaceTerminal_isDirty = field(INTERFACE_TERMINAL, "isDirty");
+        // Asking the container to re-send its whole list: the one it sends while the window is opening
+        // is applied by the client only if the terminal's screen is already up (AE2 checks
+        // currentScreen), so an early one is dropped on the floor.
+        fContainerInterfaceTerminal_forceNextUpdate = field(INTERFACE_TERMINAL, "forceNextUpdate");
         // InvTracker is a private nested class, so its own fields have to be looked up by name.
         fInvTracker_patterns = field(INV_TRACKER, "patterns");
         fInvTracker_id = field(INV_TRACKER, "id");
@@ -236,6 +241,24 @@ public class Ae2Reflect {
         } catch (Exception e) {
             throw new IllegalStateException("Failed to invoke method: " + mInvTracker_updateNBT, e);
         }
+    }
+
+    /**
+     * Makes the interface-terminal container re-send its whole provider list on the next tick.
+     *
+     * <p>
+     * The list goes out from the container's constructor - while the window is still opening - and the
+     * client applies such a packet only while the terminal's screen is the one on display (AE2 checks
+     * {@code currentScreen} in {@code PacketInterfaceTerminalUpdate}). One that arrives a moment early is
+     * dropped, and AE2 only sends the list again when some interface actually changes, so a freshly
+     * opened terminal showed an empty management area until something moved. Raising
+     * {@code forceNextUpdate} is how its own {@code scheduleUpdate} asks for the same thing.
+     */
+    public static void forceInterfaceListResend(final ContainerInterfaceTerminal obj) {
+        if (obj == null || fContainerInterfaceTerminal_forceNextUpdate == null) {
+            return;
+        }
+        writeField(obj, fContainerInterfaceTerminal_forceNextUpdate, Boolean.TRUE);
     }
 
     /**

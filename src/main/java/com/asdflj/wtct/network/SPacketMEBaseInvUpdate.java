@@ -72,6 +72,9 @@ public abstract class SPacketMEBaseInvUpdate implements IMessage {
 
     @Override
     public void fromBytes(ByteBuf buf) {
+        // TEMP DIAGNOSTIC (1.0.36, remove once the terminal-open delay is pinned down).
+        final long diagT0 = System.currentTimeMillis();
+        final int diagCompressed = buf.readableBytes();
         ref = buf.readByte();
         try {
             final GZIPInputStream gzReader = new GZIPInputStream(new InputStream() {
@@ -100,6 +103,19 @@ public abstract class SPacketMEBaseInvUpdate implements IMessage {
             }
         } catch (Exception e) {
             e.printStackTrace();
+        }
+        // TEMP DIAGNOSTIC (1.0.36, remove once the terminal-open delay is pinned down).
+        final long diagT1 = System.currentTimeMillis();
+        if (diagT1 - diagT0 > 1 || diagCompressed > 4096) {
+            cpw.mods.fml.common.FMLLog.info(
+                "[wtct-diag] %s decode n=%d compressed=%dB took=%dms t=%d thread=%s",
+                getClass().getSimpleName(),
+                this.list.size(),
+                diagCompressed,
+                diagT1 - diagT0,
+                diagT0,
+                Thread.currentThread()
+                    .getName());
         }
     }
 

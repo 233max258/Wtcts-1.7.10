@@ -77,8 +77,13 @@ jobs:
             echo "::error::the build produced no jar in build/libs"
             exit 1
           fi
+          # The changelog for a release lives next to this workflow, one file per tag. When there is
+          # one it becomes the release body; otherwise fall back to GitHub's generated notes.
+          notes=".github/release-notes/${tag}.md"
           if gh release view "$tag" >/dev/null 2>&1; then
             gh release upload "$tag" "${jars[@]}" --clobber
+          elif [[ -f "$notes" ]]; then
+            gh release create "$tag" "${jars[@]}" --title "$tag" --notes-file "$notes"
           else
             gh release create "$tag" "${jars[@]}" --title "$tag" --generate-notes
           fi

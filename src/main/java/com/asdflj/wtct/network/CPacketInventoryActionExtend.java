@@ -11,6 +11,8 @@ import java.util.Objects;
 import javax.annotation.Nullable;
 
 import net.minecraft.entity.player.EntityPlayerMP;
+import net.minecraft.inventory.Container;
+import net.minecraft.inventory.Slot;
 import net.minecraft.item.ItemStack;
 import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.nbt.NBTTagList;
@@ -158,6 +160,27 @@ public class CPacketInventoryActionExtend implements IMessage {
         }
 
         /**
+         * The slot of the container that is open right now which puts a stack into
+         * {@code inventorySlot} of the player's main inventory, or {@code null} when the open container
+         * has no such slot - see the comment in {@link #onMessage}. Every container that shows the
+         * player's inventory binds one (AE2's own player slots, the vanilla inventory, the terminal this
+         * mod opens), so the lookup only comes up empty for the containers that deliberately show no
+         * inventory at all, which is exactly the case the pull has to decline.
+         *
+         * <p>
+         * The index is checked before it is used: it comes in over the network and indexes
+         * {@code mainInventory} on both sides of the test in {@link #onMessage}.
+         */
+        @Nullable
+        private static Slot openContainerSlotFor(final EntityPlayerMP player, final int inventorySlot) {
+            if (inventorySlot < 0 || inventorySlot >= player.inventory.mainInventory.length) {
+                return null;
+            }
+            final Container open = player.openContainer;
+            return open == null ? null : open.getSlotFromInventory(player.inventory, inventorySlot);
+        }
+
+        /**
          * Where the terminal sits, as a coordinate the GUI factory can open. The packet carries the slot the
          * stack is to be dropped into (which says nothing about where the terminal is - it used to be the
          * hotbar slot the gesture was made from, and it is now simply the first empty slot the hand could not
@@ -245,15 +268,30 @@ public class CPacketInventoryActionExtend implements IMessage {
         @Override
         public IMessage onMessage(CPacketInventoryActionExtend message, MessageContext ctx) {
             final EntityPlayerMP sender = ctx.getServerHandler().playerEntity;
-            if(message.action == InventoryActionExtend.REQUEST_ITEM && sender.inventory.mainInventory[message.slot] == null){
-                message.stack.setStackSize(message.stack.getItemStack().getMaxStackSize());
-                IAEItemStack requestItem = message.stack.copy();
-                extractItemFromME(sender,requestItem,message.slot);
-                message.stack.decStackSize(requestItem.getStackSize());
-                if(message.stack.getStackSize() > 0){
-                    sender.inventory.setInventorySlotContents(message.slot,message.stack.getItemStack());
+            if (message.action == InventoryActionExtend.REQUEST_ITEM) {
+                // The stack has to go in through a slot of the container that is open right now, because
+                // that container's own diff is what carries the change to the client. Writing
+                // player.inventory directly (which is what this used to do) is only picked up while the
+                // open container holds a slot bound to that inventory index; AE2's craft dialogs are
+                // sub-guis with no player slots at all, so a pick made while one of them was up landed in
+                // the inventory on the server and nowhere on the client - the cell the pick was aimed at
+                // stayed empty for good, and no later diff could repair it, the container having already
+                // recorded the new contents. With no such slot the pick is declined instead and the stack
+                // stays in the network.
+                final Slot receiving = openContainerSlotFor(sender, message.slot);
+                if (receiving != null && sender.inventory.mainInventory[message.slot] == null) {
+                    message.stack.setStackSize(message.stack.getItemStack().getMaxStackSize());
+                    IAEItemStack requestItem = message.stack.copy();
+                    extractItemFromME(sender, requestItem, message.slot);
+                    message.stack.decStackSize(requestItem.getStackSize());
+                    if (message.stack.getStackSize() > 0) {
+                        receiving.putStack(message.stack.getItemStack());
+                        if (sender.openContainer != null) {
+                            sender.openContainer.detectAndSendChanges();
+                        }
+                    }
+                    return null;
                 }
-                return null;
             }
             if (sender.openContainer instanceof final AEBaseContainer baseContainer) {
                 Object target = baseContainer.getTarget();

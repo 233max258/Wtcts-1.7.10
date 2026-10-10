@@ -20,6 +20,14 @@ public class ItemBiggerAppEngInventory extends AppEngInternalInventory {
     private final int slot;
     private final IAEAppEngInventory terminal;
     private static final int MAX_SIZE = 64;
+    /**
+     * Set while a bulk rewrite is under way. {@link #markDirty()} serialises the whole inventory into the
+     * host item's NBT and writes that item back into the player's slot, so a loop that touches every cell
+     * (emptying the encoder, then filling it from a pattern) would serialise the entire area once per cell -
+     * twice, since a slot write dirties the inventory and the AE2 slot dirties it again. Suppressing the
+     * writeback for the duration and flushing once at the end collapses ~84 full serialisations into one.
+     */
+    private boolean batchOpen;
 
     public ItemBiggerAppEngInventory(ItemStack is, String name, int size, EntityPlayer player, int slot) {
         this(is, name, size, player, slot, null, MAX_SIZE);
@@ -72,6 +80,9 @@ public class ItemBiggerAppEngInventory extends AppEngInternalInventory {
 
     @Override
     public void markDirty() {
+        if (this.batchOpen) {
+            return;
+        }
         this.writeToNBT(Platform.openNbtData(is), this.name);
         if (Platform.isServer()) {
             if (slot != -1) {
@@ -81,6 +92,22 @@ public class ItemBiggerAppEngInventory extends AppEngInternalInventory {
             } else {
                 this.player.inventory.setItemStack(this.is);
             }
+        }
+    }
+
+    /**
+     * Starts a bulk rewrite. While one is open {@link #markDirty()} does nothing, so a loop that rewrites
+     * every cell pays for one serialisation instead of one per cell. Always pair with {@link #endBatch()}.
+     */
+    public void beginBatch() {
+        this.batchOpen = true;
+    }
+
+    /** Ends a bulk rewrite opened by {@link #beginBatch()} and flushes the accumulated change once. */
+    public void endBatch() {
+        if (this.batchOpen) {
+            this.batchOpen = false;
+            this.markDirty();
         }
     }
 

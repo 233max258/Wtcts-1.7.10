@@ -116,4 +116,18 @@ public class TypeFilterWidget {
         Wtct.proxy.netHandler.sendToServer(new CPacketTypeFilter(this.windowId, type.getId(), next));
         return true;
     }
+
+    /**
+     * Reflects the current filter map on the toggle buttons that are already built - the same write a
+     * click does - instead of rebuilding the GUI. The saved-filter sync used to run
+     * {@code reInitalize} (a whole {@code initGui}: every button, every ME slot, the whole layout)
+     * just to flip the three switches the terminal opens with, which re-created the entire screen a
+     * moment after it opened.
+     */
+    public void syncButtonStates() {
+        for (final Map.Entry<TypeToggleButton, IAEStackType<?>> e : this.buttons.entrySet()) {
+            e.getKey()
+                .setEnabled(this.filters != null && this.filters.getBoolean(e.getValue()));
+        }
+    }
 }

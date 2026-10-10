@@ -3,10 +3,12 @@ package com.asdflj.wtct.inventory;
 import javax.annotation.Nullable;
 
 import net.minecraft.entity.player.EntityPlayer;
+import net.minecraft.entity.player.EntityPlayerMP;
 import net.minecraft.world.World;
 import net.minecraftforge.common.util.ForgeDirection;
 
 import com.asdflj.wtct.Wtct;
+import com.asdflj.wtct.client.gui.container.ContainerMonitor;
 import com.asdflj.wtct.inventory.gui.GuiType;
 import com.asdflj.wtct.network.CPacketSwitchGuis;
 import com.asdflj.wtct.util.BlockPos;
@@ -44,7 +46,17 @@ public class InventoryHandler implements IGuiHandler {
         }
         ForgeDirection face = ForgeDirection.getOrientation(faceOrd);
         GuiType type = GuiType.getByOrdinal(id >>> 3);
-        return type != null ? type.guiFactory.createServerGui(player, world, x, y, z, face) : null;
+        final Object gui = type != null ? type.guiFactory.createServerGui(player, world, x, y, z, face) : null;
+        // FML sends the open-window packet before Container.addCraftingToCrafters, so the client's
+        // initGui runs before the server has pushed the network's item and fluid lists: every window
+        // used to come up on an empty grid until the round trip finished. This hook is the one thing
+        // that runs before that packet, so the lists are pushed from here - the client receives them
+        // first and parks them in EarlyTerminalLists, which initGui applies, so the grid is full on the
+        // very first frame of every window, not just the ones that raced ahead.
+        if (gui instanceof ContainerMonitor monitor && player instanceof EntityPlayerMP playerMP) {
+            monitor.resendInventory(playerMP);
+        }
+        return gui;
     }
 
     @SideOnly(Side.CLIENT)

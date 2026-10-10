@@ -379,6 +379,27 @@ public abstract class GuiMonitor extends BaseMEGui implements IConfigManagerHost
     @Override
     public void initGui() {
         Keyboard.enableRepeatEvents(true);
+        // TEMP DIAGNOSTIC (1.0.36, remove once the terminal-open delay is pinned down).
+        final StackTraceElement[] st = new Exception().getStackTrace();
+        final StringBuilder callers = new StringBuilder();
+        for (int i = 1; i < Math.min(st.length, 5); i++) {
+            callers.append(st[i].getClassName())
+                .append('.')
+                .append(st[i].getMethodName())
+                .append(' ');
+        }
+        cpw.mods.fml.common.FMLLog.info(
+            "[wtct-diag] client initGui begin t=%d thread=%s gui=%s callers: %s",
+            System.currentTimeMillis(),
+            Thread.currentThread()
+                .getName(),
+            Integer.toHexString(System.identityHashCode(this)),
+            callers);
+        // The item and fluid lists are pushed while the container is still opening - and now from
+        // InventoryHandler.getServerGuiElement, which FML runs before it sends the open-window packet,
+        // so they reach the client before this screen and are parked rather than dropped. Apply the
+        // parked lists before the first frame draws: the grid is full from frame 0, no request needed.
+        EarlyTerminalLists.applyTo(this);
 
         this.maxRows = this.getMaxRows();
         this.perRow = AEConfig.instance.getConfigManager()
@@ -749,7 +770,10 @@ public abstract class GuiMonitor extends BaseMEGui implements IConfigManagerHost
     @Override
     public void updateTypeFilters(Reference2BooleanMap<IAEStackType<?>> map) {
         this.typeFilter.setFilters(map);
-        this.reInitalize();
+        // The three toggles only flip their own painted state, so the already-built buttons are updated
+        // in place - the saved-filter sync used to run reInitalize here, a whole initGui that rebuilt
+        // every button and slot of the terminal a moment after it opened.
+        this.typeFilter.syncButtonStates();
         this.repo.updateView();
     }
 

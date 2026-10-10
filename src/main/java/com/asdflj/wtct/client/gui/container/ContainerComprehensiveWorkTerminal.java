@@ -11,6 +11,7 @@ import net.minecraft.entity.player.EntityPlayer;
 import net.minecraft.entity.player.EntityPlayerMP;
 import net.minecraft.entity.player.InventoryPlayer;
 import net.minecraft.inventory.Container;
+import net.minecraft.inventory.ICrafting;
 import net.minecraft.inventory.IInventory;
 import net.minecraft.inventory.InventoryCrafting;
 import net.minecraft.inventory.Slot;
@@ -29,6 +30,7 @@ import com.asdflj.wtct.client.gui.container.slot.SlotTicCraftingTerm;
 import com.asdflj.wtct.client.gui.container.widget.IWidgetPatternContainer;
 import com.asdflj.wtct.common.item.card.CardTicker;
 import com.asdflj.wtct.inventory.IPatternTerminal;
+import com.asdflj.wtct.inventory.ItemBiggerAppEngInventory;
 import com.asdflj.wtct.inventory.WcwtUpgradesInventory;
 import com.asdflj.wtct.inventory.item.INetworkTerminal;
 import com.asdflj.wtct.network.SPacketAutoFillPending;
@@ -61,6 +63,7 @@ import appeng.api.storage.data.IAEFluidStack;
 import appeng.api.storage.data.IAEItemStack;
 import appeng.container.ContainerNull;
 import appeng.container.guisync.GuiSync;
+import appeng.container.implementations.ContainerInterface;
 import appeng.container.implementations.ContainerInterfaceTerminal;
 import appeng.container.slot.AppEngSlot;
 import appeng.container.slot.IOptionalSlotHost;
@@ -230,10 +233,87 @@ public class ContainerComprehensiveWorkTerminal extends BasePatternContainerMoni
         // The pattern management area lists the network's pattern providers through AE2's own
         // interface terminal, exactly like the wireless dual-interface terminal does: this terminal's
         // host is a WirelessDualInterfaceTerminalInventory, which implements IInterfaceTerminal.
+        // TEMP DIAGNOSTIC (1.0.35, remove once the terminal-open delay is pinned down).
+        final long diagT0 = System.currentTimeMillis();
         this.providerRegistry = monitorable instanceof IInterfaceTerminal anchor
             ? new ContainerInterfaceTerminal(ip, anchor)
             : null;
+        cpw.mods.fml.common.FMLLog.info(
+            "[wtct-diag] server providerRegistry ctor took %dms t=%d thread=%s",
+            System.currentTimeMillis() - diagT0,
+            diagT0,
+            Thread.currentThread()
+                .getName());
         this.providerSlotSync = new ProviderSlotSync(this.providerRegistry);
+        // Last: the layout the first frame is drawn with has to be the real one.
+        this.seedOptionsFromHost();
+        cpw.mods.fml.common.FMLLog.info(
+            "[wtct-diag] server container ctor total %dms t=%d thread=%s",
+            System.currentTimeMillis() - diagT0,
+            diagT0,
+            Thread.currentThread()
+                .getName());
+    }
+
+    /**
+     * Seeds the mode and the option switches from the terminal item, so the very first frame the window
+     * draws is already the settled one.
+     *
+     * <p>
+     * Every one of these lives on the terminal item and reaches the client through its {@code @GuiSync}
+     * field - and those packets land a tick or two <em>after</em> the window opens. Until they do the
+     * client draws whatever the field was initialised with, which for the encoding mode is
+     * {@code craftingMode = true} and for the management row {@code mgmtDisplayMode = 1} and friends.
+     * The encoding panel art, the option row (the clear button alone moves nine pixels between the two
+     * modes) and the four management toggles therefore all changed the moment the sync arrived: the
+     * terminal visibly jumped into shape the instant it was opened.
+     *
+     * <p>
+     * The client's own terminal object is a snapshot of the very same item, so the real values are read
+     * here instead. Deliberately a one-off: the tick mirror in {@link #detectAndSendChanges()} would
+     * fight the synced values by writing the snapshot over them.
+     */
+    private void seedOptionsFromHost() {
+        if (this.it == null) {
+            return;
+        }
+        // The encoding mode is the one that moves the whole panel, so it is taken from the pattern the
+        // server is about to open (the edit slot) when there is one - that is what its first tick does -
+        // and from the item otherwise.
+        this.craftingMode = this.editSlotMode();
+        this.substitute = this.it.isSubstitution();
+        this.beSubstitute = this.it.canBeSubstitute();
+        this.combine = this.it.shouldCombine();
+        this.mgmtUpload = this.it.isPatternManagementUpload();
+        this.mgmtDisplayMode = this.it.getPatternManagementDisplayMode();
+        this.mgmtShowSlots = this.it.isPatternManagementShowSlots();
+        this.mgmtSearchMode = this.it.getPatternManagementSearchMode();
+        this.mgmtExpanded = this.it.isPatternManagementExpanded();
+    }
+
+    /**
+     * The comprehensive terminal's own half of {@code ContainerMonitor.resendInventory}: the provider
+     * list travels the same route as the item list and is dropped by the same gate - AE2's
+     * {@code PacketInterfaceTerminalUpdate} is applied only while the terminal's screen is up - so the
+     * management area is asked for again in the same breath. Without it a freshly opened terminal showed
+     * an empty 样板管理区 until some interface in the network happened to change.
+     */
+    @Override
+    public void resendInventory(final ICrafting c) {
+        super.resendInventory(c);
+        Ae2Reflect.forceInterfaceListResend(this.providerRegistry);
+    }
+
+    /** The mode the encoding area is about to be opened in: the edit slot's pattern, else the item's. */
+    private boolean editSlotMode() {
+        final ItemStack pattern = this.patternSlotOUT == null ? null : this.patternSlotOUT.getStack();
+        if (pattern != null && pattern.getItem() instanceof ICraftingPatternItem) {
+            final NBTTagCompound tag = pattern.getTagCompound();
+            if (tag != null && PatternScaling.readPatternCells(pattern) != null) {
+                return tag.getBoolean("crafting");
+            }
+        }
+        return this.it.isCraftingRecipe();
     }
 
     private void setupPatternSlots(InventoryPlayer ip) {
@@ -422,9 +502,37 @@ public class ContainerComprehensiveWorkTerminal extends BasePatternContainerMoni
         }
     }
 
-    /** Keeps the crafting preview in step with the matrix, like AE2's own pattern terminal. */
+    /**
+     * The 3x3 the preview was last worked out from, so the recipe scan only runs when one of the cells
+     * actually changed. See {@link #updateCraftingPreview()}.
+     */
+    private final ItemStack[] previewCells = new ItemStack[9];
+    /** False while {@link #previewCells} does not describe the matrix, so the next tick scans. */
+    private boolean previewCellsValid;
+
+    /**
+     * Keeps the crafting preview in step with the matrix, like AE2's own pattern terminal.
+     *
+     * <p>
+     * GTNH's own {@code ContainerPatternTerm} never works the preview out from its per-tick
+     * {@code detectAndSendChanges} - its {@code getAndUpdateOutput} runs only from the slot-change and
+     * sync entry points. That matters: the scan behind {@link #findCraftingResult()} walks the whole
+     * {@code CraftingManager} registry, which on GTNH is tens of thousands of recipes, and running it
+     * twenty times a second is what turned a loaded crafting pattern into a frozen terminal.
+     *
+     * <p>
+     * One 1.7.10 deviation: there is no guarantee every route that writes an encoding cell ends in
+     * {@code onSlotChange} (a cell is a {@link SlotFake}, and this terminal writes them from packets,
+     * from {@code loadEditSlotPattern} and from the encoder), so the tick stays as the trigger - but it
+     * now compares the nine cells first and only pays for the scan when one of them differs.
+     */
     private void updateCraftingPreview() {
         if (!this.craftingMode) {
+            // Back to processing: the next crafting-mode tick must work the preview out again.
+            this.previewCellsValid = false;
+            return;
+        }
+        if (this.previewCellsValid && this.matrixUnchanged()) {
             return;
         }
         final ItemStack result = this.findCraftingResult();
@@ -432,6 +540,43 @@ public class ContainerComprehensiveWorkTerminal extends BasePatternContainerMoni
         if (result == null ? current != null : !ItemStack.areItemStacksEqual(result, current)) {
             this.craftingResultInv.setInventorySlotContents(0, result);
         }
+        for (int i = 0; i < this.previewCells.length; i++) {
+            final ItemStack cell = this.encodingSlots[i].getStack();
+            this.previewCells[i] = cell == null ? null : cell.copy();
+        }
+        this.previewCellsValid = true;
+    }
+
+    /** Whether the 3x3 still holds the stacks the preview was worked out from. */
+    private boolean matrixUnchanged() {
+        for (int i = 0; i < this.previewCells.length; i++) {
+            if (!ItemStack.areItemStacksEqual(this.encodingSlots[i].getStack(), this.previewCells[i])) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * Records the preview a just-loaded crafting pattern already implies: its result is the pattern's
+     * own output, and the 3x3 is the matrix that result belongs to, so {@link #updateCraftingPreview()}
+     * then sees no change and never runs the recipe scan for it. A pattern whose output cannot be read
+     * leaves the snapshot invalid and falls back to the scan.
+     */
+    private void seedPreviewFromPattern(final List<ItemStack> outputs) {
+        if (outputs == null || outputs.isEmpty() || outputs.get(0) == null) {
+            this.previewCellsValid = false;
+            return;
+        }
+        this.craftingResultInv.setInventorySlotContents(
+            0,
+            outputs.get(0)
+                .copy());
+        for (int i = 0; i < this.previewCells.length; i++) {
+            final ItemStack cell = this.encodingSlots[i].getStack();
+            this.previewCells[i] = cell == null ? null : cell.copy();
+        }
+        this.previewCellsValid = true;
     }
 
     private final SlotCraftingMatrix[] manualCraftSlots = new SlotCraftingMatrix[9];
@@ -1238,9 +1383,24 @@ public class ContainerComprehensiveWorkTerminal extends BasePatternContainerMoni
         // TODO(pattern cache batch): pull blank patterns from the ME network into the given slot.
     }
 
+    // TEMP DIAGNOSTIC (1.0.41, remove once the terminal delay is pinned down): how much of each tick
+    // this container spends, split by part. Measure only - nothing here changes behaviour.
+    private long diagLoads;
+    private long diagTicks;
+    private long diagTicksTotal;
+    private long diagTicksMax;
+    private long diagEditTotal;
+    private long diagProviderTotal;
+    private long diagSuperTotal;
+    private long diagSuperMax;
+
     /** Mirrors the mode the host stores, which the "PatternTerminal.CraftMode" packet updates. */
     @Override
     public void detectAndSendChanges() {
+        final long diagT0 = System.currentTimeMillis();
+        long tEdit = 0;
+        long tProvider = 0;
+        long tSuper = 0;
         if (this.it != null) {
             if (appeng.util.Platform.isServer()) {
                 // Mirrored from the host on the server only. The client's own terminal object is a
@@ -1262,6 +1422,7 @@ public class ContainerComprehensiveWorkTerminal extends BasePatternContainerMoni
                 this.mgmtShowSlots = this.it.isPatternManagementShowSlots();
                 this.mgmtSearchMode = this.it.getPatternManagementSearchMode();
                 this.mgmtExpanded = this.it.isPatternManagementExpanded();
+                final long t1 = System.currentTimeMillis();
                 this.loadEditSlotPattern();
                 this.openPendingEditSlotPatternIfAreaFree();
                 // The craftable markers need the network's WHOLE craftable list - the client repo is
@@ -1270,8 +1431,10 @@ public class ContainerComprehensiveWorkTerminal extends BasePatternContainerMoni
                 // The Ctrl+hammer's crafts beyond the one the confirm screen started are submitted here,
                 // as their plans come back - the player lands on this container the moment they confirm.
                 this.submitApprovedJobs(this.getPlayerInv().player);
+                tEdit = System.currentTimeMillis() - t1;
             }
         }
+        final long t2 = System.currentTimeMillis();
         if (this.providerRegistry != null) {
             // Contents first: whatever the list has not been told about is queued in the registry's own
             // packet, which the call below then ships.
@@ -1280,8 +1443,50 @@ public class ContainerComprehensiveWorkTerminal extends BasePatternContainerMoni
             // pushes them to the client, which is what keeps the management list in step.
             this.providerRegistry.detectAndSendChanges();
         }
+        tProvider = System.currentTimeMillis() - t2;
         this.updateCraftingPreview();
+        final long t3 = System.currentTimeMillis();
         super.detectAndSendChanges();
+        tSuper = System.currentTimeMillis() - t3;
+        this.diagTick(diagT0, tEdit, tProvider, tSuper);
+    }
+
+    /**
+     * TEMP DIAGNOSTIC (1.0.41): prints a tick that cost real time, and a running summary every 100
+     * ticks so a session where every tick is merely "a bit slow" is still visible. Remove with the
+     * rest once the terminal delay is pinned down.
+     */
+    private void diagTick(final long tickStart, final long edit, final long provider, final long sup) {
+        final long total = System.currentTimeMillis() - tickStart;
+        this.diagTicks++;
+        this.diagTicksTotal += total;
+        this.diagEditTotal += edit;
+        this.diagProviderTotal += provider;
+        this.diagSuperTotal += sup;
+        if (total > this.diagTicksMax) this.diagTicksMax = total;
+        if (sup > this.diagSuperMax) this.diagSuperMax = sup;
+        if (total >= 3L) {
+            cpw.mods.fml.common.FMLLog.info(
+                "[wtct-diag] server slow tick total=%dms edit=%d provider=%d super=%d t=%d",
+                total,
+                edit,
+                provider,
+                sup,
+                tickStart);
+        }
+        if (this.diagTicks % 100 == 0) {
+            cpw.mods.fml.common.FMLLog.info(
+                "[wtct-diag] server tick summary ticks=%d avg=%dms max=%dms editAvg=%dms providerAvg=%dms superAvg=%dms superMax=%dms loads=%d t=%d",
+                this.diagTicks,
+                this.diagTicksTotal / this.diagTicks,
+                this.diagTicksMax,
+                this.diagEditTotal / this.diagTicks,
+                this.diagProviderTotal / this.diagTicks,
+                this.diagSuperTotal / this.diagTicks,
+                this.diagSuperMax,
+                this.diagLoads,
+                tickStart);
+        }
     }
 
     // ---------------------------------------------------------------------------------------------
@@ -1355,7 +1560,22 @@ public class ContainerComprehensiveWorkTerminal extends BasePatternContainerMoni
         if (this.it != null) {
             this.it.setPatternManagementExpanded(expanded);
             this.it.saveSettings();
+            // Diagnostic: confirms the flip reached the server and was written to the item. Remove once
+            // the reopen behaviour is settled.
+            cpw.mods.fml.common.FMLLog
+                .info("[wtct] management-expand set to %s and saved to the terminal item", expanded);
         }
+    }
+
+    @Override
+    public void onContainerClosed(final EntityPlayer player) {
+        // The five management switches are written through to the terminal item as they are flipped;
+        // writing them once more on the way out costs nothing and pins down the state the item keeps,
+        // whatever path the screen was left through.
+        if (this.it != null) {
+            this.it.saveSettings();
+        }
+        super.onContainerClosed(player);
     }
 
     /**
@@ -1402,6 +1622,13 @@ public class ContainerComprehensiveWorkTerminal extends BasePatternContainerMoni
      * interface is looked up in the world, its {@code getTargets()} gives the sides it feeds, and every
      * candidate neighbour is right-clicked for the player. Nothing is assumed about the machine's mod -
      * anything that opens a GUI from {@code onBlockActivated} works.
+     *
+     * <p>
+     * Neighbouring interfaces are the one exception: a block interface that was never pointed anywhere
+     * ({@code TileInterface.getTargets()}) reports <em>every</em> side, so in a row of interfaces each
+     * one becomes a candidate for its neighbour's button - and clicking it answers with the interface's
+     * own configuration screen instead of the machine's. The button is labelled "open the machine UI",
+     * so an interface is skipped rather than opened; the walk simply carries on to the next side.
      */
     public boolean openProviderMachineUi(final long id) {
         if (this.providerRegistry == null) {
@@ -1421,9 +1648,33 @@ public class ContainerComprehensiveWorkTerminal extends BasePatternContainerMoni
             final int x = loc[0] + dir.offsetX;
             final int y = loc[1] + dir.offsetY;
             final int z = loc[2] + dir.offsetZ;
+            if (isMeInterfaceAt(world, x, y, z, dir.getOpposite())) {
+                continue;
+            }
             if (openMachineUi(world, x, y, z, player, dir.getOpposite())) {
                 return true;
             }
+        }
+        return false;
+    }
+
+    /**
+     * True when the candidate neighbour is an ME interface and would therefore open its own screen:
+     * either the full-block interface (whose tile is an {@link IInterfaceHost}), or a block that
+     * carries an interface part on the very face being clicked - that face belongs to the part, so the
+     * block's own {@code onBlockActivated} never runs there anyway.
+     */
+    private static boolean isMeInterfaceAt(final World world, final int x, final int y, final int z,
+        final ForgeDirection face) {
+        if (!world.blockExists(x, y, z)) {
+            return false;
+        }
+        final TileEntity te = world.getTileEntity(x, y, z);
+        if (te instanceof IInterfaceHost) {
+            return true;
+        }
+        if (te instanceof final IPartHost partHost && face != ForgeDirection.UNKNOWN) {
+            return partHost.getPart(face) instanceof IInterfaceHost;
         }
         return false;
     }
@@ -1488,7 +1739,17 @@ public class ContainerComprehensiveWorkTerminal extends BasePatternContainerMoni
         }
         // The same test WCWT uses: the player only has one open container, so a change means the click
         // was the one that opened the machine's GUI.
-        return player.openContainer != before;
+        if (player.openContainer == before) {
+            return false;
+        }
+        // Belt and braces for an interface the pre-check could not see - a mod's own block may open
+        // AE2's interface screen without going through IInterfaceHost. That is still not the machine,
+        // so put the player back where they were and let the caller try its next candidate.
+        if (player.openContainer instanceof ContainerInterface && player instanceof final EntityPlayerMP mp) {
+            mp.closeContainer();
+            return false;
+        }
+        return true;
     }
 
     /**
@@ -1980,8 +2241,8 @@ public class ContainerComprehensiveWorkTerminal extends BasePatternContainerMoni
      * <ul>
      * <li>a cell normalised to a fluid packet still answers to the display item the picker offers for
      * the same fluid, so the wheel keeps working on a fluid it has already replaced once;
-     * <li>a fluid cell keeps the amount it was asking for - cycling the ingredient picks the fluid, it
-     * must not throw away the number the player set on the cell.
+     * <li>a fluid cell takes the amount the picked fluid asks for - cycling the ingredient follows the
+     * recipe onto the new fluid, the way GTNH's own terminal does.
      * </ul>
      *
      * @return true when a cell was written
@@ -2001,8 +2262,8 @@ public class ContainerComprehensiveWorkTerminal extends BasePatternContainerMoni
                 continue;
             }
             // The replacement arrives ready to be written - the picker's screen has already put the
-            // amount back on it (see cellKeepingAmount), and it is the screen that can read a fluid out
-            // of the display item a recipe offers.
+            // picked fluid's amount on it (see cellForPickedIngredient), and it is the screen that can
+            // read a fluid out of the display item a recipe offers.
             inv.setInventorySlotContents(i, out);
             changed = true;
         }
@@ -2028,20 +2289,22 @@ public class ContainerComprehensiveWorkTerminal extends BasePatternContainerMoni
     }
 
     /**
-     * {@code offered} as the cell that replaces {@code cell}: a fluid keeps the amount the cell was
-     * asking for, anything else is taken exactly as the picker offers it.
+     * {@code offered} as the cell that replaces {@code cell}: a fluid takes the number the picker
+     * offers with it, anything else is taken exactly as the picker offers it.
      *
      * <p>
-     * Cycling an ingredient picks which fluid goes into the cell; it is not an instruction to throw
-     * away the number the player set there, which is what used to happen - the picker's stack is the
-     * recipe's own display item, whose amount is the recipe's, so writing it verbatim put the recipe's
-     * number (or a bare one) back on the cell.
+     * The picker's stack is the recipe's own display item, so the number on a fluid is the one that
+     * recipe asks for: cycling onto another fluid moves the cell to <em>that</em> fluid's amount,
+     * which is how GTNH's own terminal cycles. Only a carrier that names no amount at all (fluid and
+     * stack size both at one) leaves the cell's own number standing, instead of dropping it to a
+     * bare one.
      */
-    public static ItemStack cellKeepingAmount(final ItemStack cell, final ItemStack offered) {
+    public static ItemStack cellForPickedIngredient(final ItemStack cell, final ItemStack offered) {
         if (PatternScaling.fluidCarriedBy(offered) == null) {
             return offered;
         }
-        return cellWithAmount(offered, fluidCellAmount(cell));
+        final long picked = fluidCellAmount(offered);
+        return cellWithAmount(offered, picked > 1 ? picked : fluidCellAmount(cell));
     }
 
     /** One line per cell: item id and amount, or {@code -}. */
@@ -2124,34 +2387,103 @@ public class ContainerComprehensiveWorkTerminal extends BasePatternContainerMoni
         if (tag == null || !(pattern.getItem() instanceof ICraftingPatternItem)) {
             return;
         }
+        final long diagT0 = System.currentTimeMillis();
         final List<List<ItemStack>> cells = PatternScaling.readPatternCells(pattern);
         if (cells == null) {
             return;
         }
         final boolean crafting = tag.getBoolean("crafting");
+        final long dParse = System.currentTimeMillis();
 
-        this.clearEncodingArea();
+        // The encoder's cells are backed by ItemBiggerAppEngInventory, whose every slot write serialises
+        // the whole encoding area into the terminal item's NBT and writes that item back into the player's
+        // slot - twice per write. Emptying and refilling the area is ~42 writes, so the load used to pay
+        // ~84 full serialisations (measured: 32ms for the clear, 32ms for the fill). Batch them and flush
+        // once, in the finally, so the area is written back exactly once.
+        final IInventory craftingEx = this.getInventoryByName(Constants.CRAFTING_EX);
+        final IInventory outputEx = this.getInventoryByName(Constants.OUTPUT_EX);
+        beginInventoryBatch(craftingEx);
+        beginInventoryBatch(outputEx);
         final List<ItemStack> inputs = cells.get(0);
-        if (crafting) {
-            for (int i = 0; i < CRAFTING_MATRIX; i++) {
-                this.encodingSlots[i].putStack(withAmount(cellAt(inputs, i), 1));
+        long dClear;
+        long dFill;
+        try {
+            this.clearEncodingArea();
+            dClear = System.currentTimeMillis();
+            if (crafting) {
+                for (int i = 0; i < CRAFTING_MATRIX; i++) {
+                    this.encodingSlots[i].putStack(withAmount(cellAt(inputs, i), 1));
+                }
+            } else {
+                for (int i = 0; i < this.encodingSlots.length; i++) {
+                    this.encodingSlots[i].putStack(cellAt(inputs, i));
+                }
+                final List<ItemStack> outputs = cells.get(1);
+                for (int i = 0; i < this.outputSlots.length; i++) {
+                    this.outputSlots[i].putStack(cellAt(outputs, i));
+                }
             }
-        } else {
-            for (int i = 0; i < this.encodingSlots.length; i++) {
-                this.encodingSlots[i].putStack(cellAt(inputs, i));
-            }
-            final List<ItemStack> outputs = cells.get(1);
-            for (int i = 0; i < this.outputSlots.length; i++) {
-                this.outputSlots[i].putStack(cellAt(outputs, i));
-            }
+        } finally {
+            dFill = System.currentTimeMillis();
+            endInventoryBatch(craftingEx);
+            endInventoryBatch(outputEx);
         }
         this.setCraftingMode(crafting);
+        final long dMode = System.currentTimeMillis();
         this.restoreEncodingOptions(tag);
-        this.detectAndSendChanges();
+        final long dOpts = System.currentTimeMillis();
+        if (crafting) {
+            // The pattern states its own result, so the preview does not have to be matched against the
+            // vanilla recipe list. That scan - tens of thousands of entries, and a full 3x3 makes every
+            // candidate compare all nine cells - ran from addCraftingToCrafters' detectAndSendChanges the
+            // moment a terminal holding a pattern was opened, and was the stall felt there. GTNH's own
+            // terminal pays nothing at open because it never auto-fills its matrix from the edit slot.
+            this.seedPreviewFromPattern(cells.get(1));
+        }
+        // No re-entrant detectAndSendChanges() here: this method is only ever reached from
+        // detectAndSendChanges(), whose own super call ships the slot contents written above. AE2's
+        // ContainerPatternTerm does not re-enter either, and the re-entry ran the whole per-tick
+        // pipeline a second time on every load.
         // The area is now exactly this pattern - that is the state a later edit-slot change can open
         // over again without costing anybody their work.
+        final long dSeed = System.currentTimeMillis();
         this.lastLoadedArea = java.util.Arrays.toString(this.cellSnapshot());
+        final long dSnap = System.currentTimeMillis();
         this.lastAreaPattern = pattern.copy();
+        final long dCopy = System.currentTimeMillis();
+        this.diagLoads++;
+        cpw.mods.fml.common.FMLLog.info(
+            "[wtct-diag] server pattern load took=%dms parse=%d clear=%d fill=%d mode=%d opts=%d seed=%d snap=%d copy=%d crafting=%s inputs=%d total=%d t=%d",
+            dCopy - diagT0,
+            dParse - diagT0,
+            dClear - dParse,
+            dFill - dClear,
+            dMode - dFill,
+            dOpts - dMode,
+            dSeed - dOpts,
+            dSnap - dSeed,
+            dCopy - dSnap,
+            crafting,
+            inputs.size(),
+            this.diagLoads,
+            diagT0);
+    }
+
+    /**
+     * Opens a bulk rewrite on an encoder backing inventory when it supports one, so a loop that rewrites
+     * every cell serialises the area back into the terminal item only once instead of once per cell.
+     */
+    private static void beginInventoryBatch(final IInventory inv) {
+        if (inv instanceof ItemBiggerAppEngInventory) {
+            ((ItemBiggerAppEngInventory) inv).beginBatch();
+        }
+    }
+
+    /** Ends a bulk rewrite opened by {@link #beginInventoryBatch} and flushes the change once. */
+    private static void endInventoryBatch(final IInventory inv) {
+        if (inv instanceof ItemBiggerAppEngInventory) {
+            ((ItemBiggerAppEngInventory) inv).endBatch();
+        }
     }
 
     /**
@@ -2640,12 +2972,25 @@ public class ContainerComprehensiveWorkTerminal extends BasePatternContainerMoni
     }
 
     private ItemStack findCraftingResult() {
+        final long diagT0 = System.currentTimeMillis();
         final InventoryCrafting ic = new InventoryCrafting(new ContainerNull(), 3, 3);
         for (int i = 0; i < 9; i++) {
             ic.setInventorySlotContents(i, this.encodingSlots[i].getStack());
         }
-        return CraftingManager.getInstance()
+        final ItemStack result = CraftingManager.getInstance()
             .findMatchingRecipe(ic, this.getPlayerInv().player.worldObj);
+        final long diagMs = System.currentTimeMillis() - diagT0;
+        if (diagMs >= 3L) {
+            // TEMP DIAGNOSTIC (1.0.41): findMatchingRecipe walks the whole GTNH recipe list, so this is
+            // the scan the encoding area pays for every time its matrix changes.
+            cpw.mods.fml.common.FMLLog.info(
+                "[wtct-diag] %s findCraftingResult took=%dms result=%s t=%d",
+                appeng.util.Platform.isServer() ? "server" : "client",
+                diagMs,
+                result,
+                diagT0);
+        }
+        return result;
     }
 
     /**

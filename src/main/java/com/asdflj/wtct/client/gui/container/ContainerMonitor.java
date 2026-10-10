@@ -9,6 +9,7 @@ import javax.annotation.Nonnull;
 import net.minecraft.entity.player.EntityPlayer;
 import net.minecraft.entity.player.EntityPlayerMP;
 import net.minecraft.entity.player.InventoryPlayer;
+import net.minecraft.inventory.Container;
 import net.minecraft.inventory.ICrafting;
 import net.minecraft.inventory.Slot;
 import net.minecraft.item.ItemStack;
@@ -77,6 +78,15 @@ public abstract class ContainerMonitor extends BaseNetworkContainer implements I
     protected IConfigManager serverCM;
     protected IGridNode networkNode;
     private boolean typeFilterSynced = false;
+    /**
+     * Set from the network thread by {@code CPacketInventoryRequest} and consumed on the server thread
+     * in {@link #detectAndSendChanges()}. The detour matters: the simpleimpl handler runs on a Netty IO
+     * thread, where FML's {@code getEffectiveSide()} answers CLIENT for anything not literally named
+     * "Server thread" - so {@code ItemMonitor.queueInventory}'s own {@code Platform.isServer()} guard
+     * would silently no-op and a re-send asked from there never happened. Deferring to the tick keeps
+     * every list build on the server thread.
+     */
+    private volatile boolean inventoryResendRequested;
 
     public ContainerMonitor(InventoryPlayer ip, ITerminalHost monitorable) {
         super(ip, monitorable);
@@ -180,6 +190,19 @@ public abstract class ContainerMonitor extends BaseNetworkContainer implements I
                 }
             }
             processItemList();
+            if (this.inventoryResendRequested) {
+                this.inventoryResendRequested = false;
+                // TEMP DIAGNOSTIC (1.0.35, remove once the terminal-open delay is pinned down).
+                cpw.mods.fml.common.FMLLog.info(
+                    "[wtct-diag] server resend flag consumed t=%d thread=%s",
+                    System.currentTimeMillis(), Thread.currentThread()
+                        .getName());
+                for (final Object crafter : this.crafters) {
+                    if (crafter instanceof final ICrafting cr) {
+                        this.resendInventory(cr);
+                    }
+                }
+            }
             syncTypeFilter();
             super.detectAndSendChanges();
         }
@@ -225,17 +248,53 @@ public abstract class ContainerMonitor extends BaseNetworkContainer implements I
     @Override
     public void addCraftingToCrafters(final ICrafting c) {
         super.addCraftingToCrafters(c);
+        // TEMP DIAGNOSTIC (1.0.35, remove once the terminal-open delay is pinned down).
+        final long t0 = System.currentTimeMillis();
         this.monitor.queueInventory(c);
         // The fluid channel needs the same kick as the item one: without it the client only learns about
         // fluids from later changes (FluidMonitor sends the difference), so a terminal opened on a network
         // whose fluids never move shows an empty fluid list - water already stored simply is not there.
         this.fluidMonitor.queueInventory(c);
+        cpw.mods.fml.common.FMLLog.info(
+            "[wtct-diag] server addCraftingToCrafters both lists took %dms t=%d thread=%s",
+            System.currentTimeMillis() - t0,
+            t0,
+            Thread.currentThread()
+                .getName());
     }
 
     @Override
     public void removeCraftingFromCrafters(final ICrafting c) {
         super.removeCraftingFromCrafters(c);
         this.monitor.removeCraftingFromCrafters(c);
+    }
+
+    /**
+     * Asks for the whole item and fluid lists to be pushed again on the next container tick.
+     *
+     * <p>
+     * Safe to call from any thread - the flag is only read on the server thread, where
+     * {@code ItemMonitor.queueInventory}'s {@code Platform.isServer()} guard actually holds; see
+     * {@link #inventoryResendRequested} for why the request must not push the lists directly.
+     */
+    public void requestInventoryResend() {
+        this.inventoryResendRequested = true;
+    }
+
+    /**
+     * Re-sends the whole item and fluid lists to one player. Server thread only.
+     *
+     * <p>
+     * The copies {@link #addCraftingToCrafters(ICrafting)} pushes go out while the window is still being
+     * built, and the client applies a list only while the terminal's screen is the one on display - so
+     * those are dropped whenever they lose the race with the screen coming up. The client now parks such
+     * a list and applies it from its {@code initGui} (see {@code EarlyTerminalLists}); this re-send stays
+     * as the backstop for a list that never got parked, asked for by the GUI's own {@code initGui}
+     * through {@code CPacketInventoryRequest}.
+     */
+    public void resendInventory(final ICrafting c) {
+        this.monitor.queueInventory(c);
+        this.fluidMonitor.queueInventory(c);
     }
 
     @Override
@@ -911,16 +970,44 @@ public abstract class ContainerMonitor extends BaseNetworkContainer implements I
     }
 
     /**
-     * This container has no player slots, so vanilla never syncs the player inventory after we modify it server
-     * side; push the changed main inventory rows through the player's inventory container (window 0) manually.
+     * Pushes the player inventory cells this container just wrote into, because nothing vanilla does covers
+     * them: the open container is the only one its own diffing looks at, so a row filled by a shift-click has
+     * to be announced by hand.
+     *
+     * <p>
+     * Both screens the player can be looking at keep their own copy of those cells - the open container backs
+     * the terminal's screen, the player's inventory container backs the one that appears the moment the
+     * terminal is closed - so both are told.
      */
     private void syncPlayerInventory(EntityPlayerMP player) {
         final InventoryPlayer inv = player.inventory;
-        for (int i = 0; i < inv.mainInventory.length; i++) {
-            // inventoryContainer layout: hotbar = slots 36..44, main inventory = slots 9..35
+        final Container open = player.openContainer;
+        if (open != null && open != player.inventoryContainer) {
+            pushChangedPlayerSlots(player, open, inv);
+        }
+        // Only vanilla's thirty-six cells have a slot in the player's own container: it keeps the hotbar in
+        // 36..44 and the main rows in 9..35. Backhand appends its offhand cell at index 36 of the same array,
+        // and that index maps onto the hotbar's first container slot - sending it overwrote the cell that had
+        // just been filled with the offhand item (usually nothing), which is how the hotbar's first cell went
+        // blank while the stack really sat in mainInventory[0].
+        final int cells = Math.min(inv.mainInventory.length, 36);
+        for (int i = 0; i < cells; i++) {
             final int containerSlot = i < 9 ? 36 + i : i;
             player.playerNetServerHandler.sendPacket(
                 new S2FPacketSetSlot(player.inventoryContainer.windowId, containerSlot, inv.mainInventory[i]));
+        }
+    }
+
+    /** Ships just the player-owned slots of {@code open} whose contents no longer match its own cache. */
+    private static void pushChangedPlayerSlots(final EntityPlayerMP player, final Container open,
+        final InventoryPlayer inv) {
+        for (int i = 0; i < open.inventorySlots.size(); i++) {
+            final Slot slot = open.inventorySlots.get(i);
+            if (slot == null || slot.inventory != inv) continue;
+            final ItemStack stack = slot.getStack();
+            if (ItemStack.areItemStacksEqual(open.inventoryItemStacks.get(i), stack)) continue;
+            player.playerNetServerHandler.sendPacket(new S2FPacketSetSlot(open.windowId, i, stack));
+            open.inventoryItemStacks.set(i, stack == null ? null : stack.copy());
         }
     }
 }

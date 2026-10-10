@@ -137,6 +137,8 @@ public class FluidMonitor implements IMEMonitorHandlerReceiver<IAEFluidStack>, I
     @Override
     public void queueInventory(ICrafting c) {
         if (Platform.isServer() && c instanceof EntityPlayer && this.fluidMonitor != null && this.itemMonitor != null) {
+            // TEMP DIAGNOSTIC (1.0.35, remove once the terminal-open delay is pinned down).
+            final long t0 = System.currentTimeMillis();
             final IItemList<IAEFluidStack> monitorCache = this.fluidMonitor.getStorageList();
             final IItemList<IAEItemStack> itemMonitorCache = this.itemMonitor.getStorageList();
             List<IAEFluidStack> toSend = new ArrayList<>();
@@ -151,6 +153,13 @@ public class FluidMonitor implements IMEMonitorHandlerReceiver<IAEFluidStack>, I
             SPacketMEFluidInvUpdate piu = new SPacketMEFluidInvUpdate();
             piu.addAll(toSend);
             Wtct.proxy.netHandler.sendTo(piu, (EntityPlayerMP) c);
+            cpw.mods.fml.common.FMLLog.info(
+                "[wtct-diag] server fluid queueInventory fluids=%d build=%dms t=%d thread=%s",
+                toSend.size(),
+                System.currentTimeMillis() - t0,
+                t0,
+                Thread.currentThread()
+                    .getName());
         }
     }
 

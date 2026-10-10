@@ -128,7 +128,15 @@ public class Pinned {
         }
         PinInfo info = pinInfo.get(new PinKey(item));
         if (info != null) {
-            info.since = Instant.now();
+            // A favourite keeps the place the player gave it. Both rows are ordered by this stamp, and
+            // autocrafting restates its pin every time a job for that item starts - so refreshing the
+            // stamp unconditionally reshuffled the whole favourites row as soon as one of the pinned
+            // items was crafted again. Only a pin that is new to the favourites takes a fresh stamp,
+            // which is what puts a promoted crafting pin at the end of the row.
+            final boolean promoting = reason == PinReason.FAVORITE && info.reason != PinReason.FAVORITE;
+            if (info.reason != PinReason.FAVORITE || promoting) {
+                info.since = Instant.now();
+            }
             info.canPrune = false;
             // Hold on to the instance the grid currently knows, so the pinned cell keeps rendering.
             info.stack = item;
@@ -143,10 +151,18 @@ public class Pinned {
         }
 
         if (pinInfo.size() > MAX_PINNED) {
-            List<Map.Entry<PinKey, PinInfo>> toRemove = new ArrayList<>(pinInfo.entrySet());
-            toRemove.sort(TIME_COMPARATOR);
-            for (Map.Entry<PinKey, PinInfo> entry : toRemove.subList(0, toRemove.size() - MAX_PINNED)) {
-                pinInfo.remove(entry.getKey());
+            // Oldest first, but the autocrafting pins go before the player's own list. They are the ones
+            // restated - and so re-stamped - constantly, and ordering them together with the favourites
+            // made the player's oldest favourites the first thing dropped when the row filled up.
+            final List<Map.Entry<PinKey, PinInfo>> toRemove = new ArrayList<>(pinInfo.entrySet());
+            toRemove.sort(
+                Comparator.<Map.Entry<PinKey, PinInfo>, Integer>comparing(
+                    e -> e.getValue().reason == PinReason.FAVORITE ? 1 : 0)
+                    .thenComparing(TIME_COMPARATOR));
+            for (int i = 0, drop = toRemove.size() - MAX_PINNED; i < drop; i++) {
+                pinInfo.remove(
+                    toRemove.get(i)
+                        .getKey());
             }
         }
         // A favourite just changed hands - write the block back, or a game restart forgets it.
