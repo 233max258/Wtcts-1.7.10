@@ -76,6 +76,14 @@ public class ContainerWcwtSettings extends AEBaseContainer {
      */
     public static final String KEY_CLEAR_GRID_ON_CLOSE = "ClearGridOnClose";
 
+    /**
+     * The "encode hot ingots as the ingot they cool into" switch: with it on, an encode writes a hot
+     * ingot's cooled ingot into the pattern (its input and output alike) instead of the hot one. Off by
+     * default - a pattern that asks for the hot ingot is sometimes exactly what the machine needs, so
+     * this is a choice the player opts into rather than a fix applied behind their back.
+     */
+    public static final String KEY_HOT_INGOT_TO_COLD = "HotIngotToCold";
+
     private final ItemStack terminal;
 
     public ContainerWcwtSettings(final InventoryPlayer ip, final ITerminalHost host) {
@@ -91,7 +99,8 @@ public class ContainerWcwtSettings extends AEBaseContainer {
     private static boolean defaultsToOn(final String key) {
         return !KEY_BIG_COUNTS.equals(key) && !KEY_STASH_AMBIGUOUS.equals(key)
             && !KEY_CLEAR_GRID_ON_CLOSE.equals(key)
-            && !KEY_CIRCUIT_ALWAYS_ONE.equals(key);
+            && !KEY_CIRCUIT_ALWAYS_ONE.equals(key)
+            && !KEY_HOT_INGOT_TO_COLD.equals(key);
     }
 
     /** The switch's current state: features default to on, the display switches to off. */

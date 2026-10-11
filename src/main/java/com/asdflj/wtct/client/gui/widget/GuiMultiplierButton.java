@@ -18,8 +18,8 @@ import appeng.client.gui.widgets.ITooltip;
  * {@code PatternMultiplierButton} renders on 1.21.
  *
  * <p>
- * The swap button (⇄, main/secondary output rotation) has no usable font glyph in 1.7.10 - the
- * unicode arrow pages are not shipped - so it draws two opposing arrows with quads instead.
+ * The swap button (⇄, main/secondary output rotation) draws the ⇄ character itself (U+21C4): the
+ * shipped unicode font pages do carry it.
  */
 public class GuiMultiplierButton extends GuiButton implements ITooltip {
 
@@ -33,6 +33,8 @@ public class GuiMultiplierButton extends GuiButton implements ITooltip {
     private static final int COLOR_TEXT = 0xFFFFFF;
     private static final int COLOR_HOVER = 0xA0A0A0;
     private static final int COLOR_GLYPH = 0xF2F2F2;
+    /** The swap arrows on the hovered (light) plate - the frame's dark slate, so they stay readable. */
+    private static final int COLOR_GLYPH_ON_HOVER = 0x413F54;
 
     /** Label shown on the plate; {@code null} on the swap button, which draws arrows instead. */
     private final String label;
@@ -73,9 +75,18 @@ public class GuiMultiplierButton extends GuiButton implements ITooltip {
         // so a click has a press of its own instead of looking like the hover that precedes it.
         final boolean pressed = hovered && org.lwjgl.input.Mouse.isButtonDown(0);
         final int dy = pressed ? 2 : (hovered ? 1 : 0);
+        // The plate is a blit, so it needs the texture unit on, blending on and no tint - and it cannot
+        // assume them. The swap button draws its arrows with the texture disabled, and whatever it leaves
+        // behind lands on the *next* button: the plate is then written straight from a transparent part of
+        // the sheet without blending, which comes out as a solid white square (the "×2 turned all white"
+        // report). Asking for the state here makes every button independent of its neighbours.
+        GL11.glEnable(GL11.GL_TEXTURE_2D);
+        GL11.glEnable(GL11.GL_BLEND);
+        GL11.glBlendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA);
+        GL11.glDisable(GL11.GL_LIGHTING);
+        GL11.glColor4f(1.0F, 1.0F, 1.0F, 1.0F);
         mc.getTextureManager()
             .bindTexture(TEXTURE);
-        GL11.glColor4f(1.0F, 1.0F, 1.0F, 1.0F);
         drawTexturedModalRect(
             this.xPosition,
             this.yPosition + dy,
@@ -84,7 +95,18 @@ public class GuiMultiplierButton extends GuiButton implements ITooltip {
             this.width,
             this.height);
         if (this.swap) {
-            drawSwapGlyph(hovered ? COLOR_HOVER : COLOR_GLYPH, dy);
+            // The swap glyph is the ⇄ character itself (U+21C4): 1.7.10 ships the unicode font pages, and
+            // page 0x21 carries the same pixel-art double arrow the reference mod shows - the first
+            // attempt here hand-drew the arrows from quads and came out a smudge. Hovering swaps the
+            // plate for the light-blue one, so the glyph turns dark on it (the labels go grey the same
+            // way).
+            final String glyph = "\u21C4";
+            final int color = hovered ? COLOR_GLYPH_ON_HOVER : COLOR_GLYPH;
+            mc.fontRenderer.drawStringWithShadow(
+                glyph,
+                this.xPosition + (this.width - mc.fontRenderer.getStringWidth(glyph)) / 2,
+                this.yPosition + (this.height - 8) / 2 + dy,
+                color);
         } else {
             final int color = hovered ? COLOR_HOVER : COLOR_TEXT;
             mc.fontRenderer.drawStringWithShadow(
@@ -93,45 +115,6 @@ public class GuiMultiplierButton extends GuiButton implements ITooltip {
                 this.yPosition + (this.height - 8) / 2 + dy,
                 color);
         }
-    }
-
-    /** Two opposing arrows (top one pointing right, bottom one pointing left), like ⇄. */
-    private void drawSwapGlyph(final int rgb, final int dy) {
-        final float r = (rgb >> 16 & 0xFF) / 255.0F;
-        final float g = (rgb >> 8 & 0xFF) / 255.0F;
-        final float b = (rgb & 0xFF) / 255.0F;
-        final int x = this.xPosition;
-        final int y = this.yPosition + dy;
-        GL11.glPushAttrib(GL11.GL_ALL_ATTRIB_BITS);
-        GL11.glDisable(GL11.GL_TEXTURE_2D);
-        GL11.glDisable(GL11.GL_LIGHTING);
-        GL11.glEnable(GL11.GL_BLEND);
-        GL11.glBlendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA);
-        GL11.glColor4f(r, g, b, 1.0F);
-        GL11.glTranslatef(0.0F, 0.0F, 200.0F);
-        final net.minecraft.client.renderer.Tessellator tess = net.minecraft.client.renderer.Tessellator.instance;
-        tess.startDrawingQuads();
-        // Top shaft, arrow head on the right.
-        quad(tess, x + 4, y + 5, x + 10, y + 7);
-        quad(tess, x + 8, y + 3, x + 10, y + 9);
-        quad(tess, x + 10, y + 4, x + 12, y + 8);
-        quad(tess, x + 12, y + 5, x + 13, y + 7);
-        // Bottom shaft, arrow head on the left.
-        quad(tess, x + 7, y + 10, x + 13, y + 12);
-        quad(tess, x + 7, y + 8, x + 9, y + 14);
-        quad(tess, x + 5, y + 9, x + 7, y + 13);
-        quad(tess, x + 4, y + 10, x + 5, y + 12);
-        tess.draw();
-        GL11.glTranslatef(0.0F, 0.0F, -200.0F);
-        GL11.glPopAttrib();
-    }
-
-    private static void quad(final net.minecraft.client.renderer.Tessellator tess, final float x0, final float y0,
-        final float x1, final float y1) {
-        tess.addVertex(x0, y1, 0.0D);
-        tess.addVertex(x1, y1, 0.0D);
-        tess.addVertex(x1, y0, 0.0D);
-        tess.addVertex(x0, y0, 0.0D);
     }
 
     @Override

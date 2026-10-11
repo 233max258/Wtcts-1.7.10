@@ -192,11 +192,6 @@ public abstract class ContainerMonitor extends BaseNetworkContainer implements I
             processItemList();
             if (this.inventoryResendRequested) {
                 this.inventoryResendRequested = false;
-                // TEMP DIAGNOSTIC (1.0.35, remove once the terminal-open delay is pinned down).
-                cpw.mods.fml.common.FMLLog.info(
-                    "[wtct-diag] server resend flag consumed t=%d thread=%s",
-                    System.currentTimeMillis(), Thread.currentThread()
-                        .getName());
                 for (final Object crafter : this.crafters) {
                     if (crafter instanceof final ICrafting cr) {
                         this.resendInventory(cr);
@@ -248,19 +243,11 @@ public abstract class ContainerMonitor extends BaseNetworkContainer implements I
     @Override
     public void addCraftingToCrafters(final ICrafting c) {
         super.addCraftingToCrafters(c);
-        // TEMP DIAGNOSTIC (1.0.35, remove once the terminal-open delay is pinned down).
-        final long t0 = System.currentTimeMillis();
         this.monitor.queueInventory(c);
         // The fluid channel needs the same kick as the item one: without it the client only learns about
         // fluids from later changes (FluidMonitor sends the difference), so a terminal opened on a network
         // whose fluids never move shows an empty fluid list - water already stored simply is not there.
         this.fluidMonitor.queueInventory(c);
-        cpw.mods.fml.common.FMLLog.info(
-            "[wtct-diag] server addCraftingToCrafters both lists took %dms t=%d thread=%s",
-            System.currentTimeMillis() - t0,
-            t0,
-            Thread.currentThread()
-                .getName());
     }
 
     @Override

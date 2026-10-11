@@ -32,6 +32,9 @@ public class KeybindLoader implements Runnable {
 
     public static KeyBinding openTerminalMenu;
     public static KeyBinding openComprehensiveWorkTerminal;
+    /** The two bindings' state on the previous input event, so only a fresh press fires - see onKeyInput. */
+    private boolean menuWasDown;
+    private boolean terminalWasDown;
 
     @Override
     public void run() {
@@ -84,14 +87,21 @@ public class KeybindLoader implements Runnable {
         if (p.openContainer == null) {
             return;
         }
-        if (openTerminalMenu.isPressed()) {
+        // Edge-triggered on purpose: 1.7.10 reports a binding as pressed for as long as it is held, so a
+        // key (or mouse button) that never came back up asked for a new terminal every tick. Each press
+        // is remembered here and only the transition fires the request.
+        final boolean menuDown = openTerminalMenu.isPressed();
+        if (menuDown && !this.menuWasDown) {
             WtctAPI.instance()
                 .openTerminalMenu();
         }
-        if (openComprehensiveWorkTerminal.isPressed()) {
+        this.menuWasDown = menuDown;
+        final boolean terminalDown = openComprehensiveWorkTerminal.isPressed();
+        if (terminalDown && !this.terminalWasDown) {
             WtctAPI.instance()
                 .openComprehensiveWorkTerminal();
         }
+        this.terminalWasDown = terminalDown;
 
     }
 

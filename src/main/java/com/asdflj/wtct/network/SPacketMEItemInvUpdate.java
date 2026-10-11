@@ -59,32 +59,13 @@ public class SPacketMEItemInvUpdate extends SPacketMEBaseInvUpdate implements IM
         public IMessage onMessage(SPacketMEItemInvUpdate message, MessageContext ctx) {
             final GuiScreen gs = Minecraft.getMinecraft().currentScreen;
             if (message.ref == Constants.MessageType.UPDATE_ITEMS.type) {
-                // TEMP DIAGNOSTIC (1.0.35, remove once the terminal-open delay is pinned down).
-                final long t = System.currentTimeMillis();
-                final String thread = Thread.currentThread()
-                    .getName();
                 if (gs instanceof IGuiMonitorTerminal gmt) {
-                    cpw.mods.fml.common.FMLLog.info(
-                        "[wtct-diag] client item list APPLIED n=%d t=%d thread=%s screen=%s",
-                        message.list.size(),
-                        t,
-                        thread,
-                        gs.getClass()
-                            .getSimpleName());
                     gmt.postStackUpdate(message.list);
                 } else {
                     // The screen swap runs on the client thread while this packet is applied on the
                     // network thread, so a full list that loses the race used to be dropped and the
                     // terminal opened on an empty grid until the network happened to move. Park it:
                     // the GUI's initGui applies it before the first frame draws (EarlyTerminalLists).
-                    cpw.mods.fml.common.FMLLog.info(
-                        "[wtct-diag] client item list STASHED n=%d t=%d thread=%s screen=%s",
-                        message.list.size(),
-                        t,
-                        thread,
-                        gs == null ? "null"
-                            : gs.getClass()
-                                .getSimpleName());
                     EarlyTerminalLists.stashStacks(message.list);
                 }
             } else if (message.ref == Constants.MessageType.UPDATE_PLAYER_ITEM.type) {

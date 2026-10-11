@@ -95,18 +95,10 @@ public final class EarlyTerminalLists {
      */
     public static synchronized void applyTo(final IGuiMonitorTerminal gui) {
         final long now = System.currentTimeMillis();
-        // TEMP DIAGNOSTIC (1.0.35, remove once the terminal-open delay is pinned down).
-        cpw.mods.fml.common.FMLLog.info(
-            "[wtct-diag] client initGui applyTo t=%d stacks=%s fluids=%s player=%s iface=%s age=%dms",
-            now, s_stacks != null, s_fluidStacks != null, s_hasPlayerItem, s_hasInterfaceUpdate,
-            s_stashedAt == 0 ? -1 : now - s_stashedAt);
         final boolean fresh = s_stashedAt != 0 && now - s_stashedAt <= MAX_AGE_MS;
         if (fresh) {
             if (s_stacks != null) {
-                final long t0 = now;
                 gui.postStackUpdate(s_stacks);
-                cpw.mods.fml.common.FMLLog.info(
-                    "[wtct-diag] client postStackUpdate took %dms", System.currentTimeMillis() - t0);
             }
             if (s_fluidStacks != null) {
                 gui.postStackUpdate(s_fluidStacks);

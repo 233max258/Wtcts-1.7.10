@@ -10,6 +10,7 @@ import net.minecraft.tileentity.TileEntity;
 import net.minecraft.world.World;
 import net.minecraftforge.common.util.ForgeDirection;
 
+import com.asdflj.wtct.client.gui.container.ContainerComprehensiveWorkTerminal;
 import com.asdflj.wtct.inventory.InventoryHandler;
 import com.asdflj.wtct.inventory.gui.GuiType;
 import com.asdflj.wtct.util.BaublesUtil;
@@ -59,6 +60,13 @@ public class CPacketSwitchGuis implements IMessage {
             World w = player.worldObj;
             if (message.guiType == GuiType.COMPREHENSIVE_WORK_TERMINAL
                 || message.guiType == GuiType.COMPREHENSIVE_WORK_TERMINAL_BRIDGE) {
+                // Already looking at it: this request would close the window and build it again, which is
+                // exactly what a held keybinding used to do once a second - the terminal reopened itself
+                // in a loop, and every reopen re-sorted the item list, rebuilt the management area and
+                // re-laid the encoding buttons. Nothing is gained by serving it, so it is refused.
+                if (player.openContainer instanceof ContainerComprehensiveWorkTerminal) {
+                    return null;
+                }
                 // Opened from the keybinding, which always routes through the bridge factory: the
                 // terminal may sit in a Baubles slot, and only the bridge factory can decode a bridge
                 // coordinate. Resolved here, server side, since the client copy of a Baubles slot is

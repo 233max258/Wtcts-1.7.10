@@ -21,12 +21,14 @@ import com.asdflj.wtct.Wtct;
 import com.asdflj.wtct.api.Constants;
 import com.asdflj.wtct.client.gui.GuiComprehensiveWorkTerminal;
 import com.asdflj.wtct.client.gui.container.ContainerComprehensiveWorkTerminal;
+import com.asdflj.wtct.client.gui.container.ContainerWcwtSettings;
 import com.asdflj.wtct.integration.Mods;
 import com.asdflj.wtct.nei.object.OrderStack;
 import com.asdflj.wtct.nei.recipes.FluidRecipe;
 import com.asdflj.wtct.network.CPacketNEIRecipe;
 import com.asdflj.wtct.network.CPacketTransferRecipe;
 import com.asdflj.wtct.proxy.ClientProxy;
+import com.asdflj.wtct.util.GTUtil;
 import com.asdflj.wtct.util.PHUtil;
 import com.asdflj.wtct.util.PatternScaling;
 
@@ -174,12 +176,59 @@ public class PatternTerminalRecipeTransferHandler implements IOverlayHandler {
                 in = PHUtil.transfer(in);
             }
             List<OrderStack<?>> out = FluidRecipe.getPackageOutputs(recipe, recipeIndex, !notUseOther(recipe));
+            // The "encode hot ingots as the ingot they cool into" switch, applied where NEI fills the
+            // encoding area rather than when the finished pattern is written: a GregTech blast furnace
+            // recipe is a dust in and a *hot* ingot out, which is not what the machine downstream
+            // consumes, so the cells take the cooled ingot and the player sees what was really filled
+            // in. With the switch off this is the plain recipe, exactly as before.
+            if (hotIngotToCold(firstGui)) {
+                in = cooledIngots(in);
+                out = cooledIngots(out);
+            }
             Wtct.proxy.netHandler.sendToServer(new CPacketTransferRecipe(in, out, craft, shift));
         }
     }
 
     private static List<PositionedStack> ingredients(IRecipeHandler recipe, int recipeIndex) {
         return recipe.getIngredientStacks(recipeIndex);
+    }
+
+    /**
+     * Whether this terminal asked for hot ingots to be written as the ingot they cool into. The switch
+     * lives on the terminal item (see {@code ContainerWcwtSettings.KEY_HOT_INGOT_TO_COLD}), which both
+     * the settings screen and this terminal read; the container the GUI is bound to holds that stack.
+     */
+    private static boolean hotIngotToCold(final GuiContainer gui) {
+        if (!(gui.inventorySlots instanceof final ContainerComprehensiveWorkTerminal container)) {
+            return false;
+        }
+        return ContainerWcwtSettings
+            .isOn(container.getTerminalStack(), ContainerWcwtSettings.KEY_HOT_INGOT_TO_COLD);
+    }
+
+    /** The same list with every hot ingot replaced by the ingot it cools into; see GTUtil.cooledIngot. */
+    private static List<OrderStack<?>> cooledIngots(final List<OrderStack<?>> stacks) {
+        final List<OrderStack<?>> cooled = new ArrayList<>(stacks.size());
+        for (final OrderStack<?> order : stacks) {
+            if (!(order.getStack() instanceof final ItemStack item)) {
+                cooled.add(order);
+                continue;
+            }
+            final ItemStack replacement = GTUtil.cooledIngot(item);
+            final ItemStack[] alternatives = order.getItems();
+            if (alternatives == null || alternatives.length < 2) {
+                cooled.add(new OrderStack<>(replacement, order.getIndex()));
+                continue;
+            }
+            // The ingredient's own alternatives ride along, mapped the same way: cycling them would
+            // otherwise put a hot ingot back on a cell the switch had just cooled.
+            final ItemStack[] mapped = new ItemStack[alternatives.length];
+            for (int i = 0; i < alternatives.length; i++) {
+                mapped[i] = alternatives[i] == null ? null : GTUtil.cooledIngot(alternatives[i]);
+            }
+            cooled.add(new OrderStack<>(replacement, order.getIndex(), mapped));
+        }
+        return cooled;
     }
 
     private boolean notUseOther(IRecipeHandler recipeHandler) {

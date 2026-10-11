@@ -19,6 +19,7 @@ import net.minecraft.item.ItemStack;
 import net.minecraft.item.crafting.CraftingManager;
 import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.nbt.NBTTagList;
+import net.minecraft.network.play.server.S2FPacketSetSlot;
 import net.minecraft.tileentity.TileEntity;
 import net.minecraft.world.World;
 import net.minecraftforge.common.util.ForgeDirection;
@@ -37,6 +38,7 @@ import com.asdflj.wtct.network.SPacketAutoFillPending;
 import com.asdflj.wtct.network.SPacketCraftableKeys;
 import com.asdflj.wtct.util.Ae2Reflect;
 import com.asdflj.wtct.util.BaublesUtil;
+import com.asdflj.wtct.util.GTUtil;
 import com.asdflj.wtct.util.NeCharUtil;
 import com.asdflj.wtct.util.PHUtil;
 import com.asdflj.wtct.util.PatternScaling;
@@ -201,6 +203,15 @@ public class ContainerComprehensiveWorkTerminal extends BasePatternContainerMoni
      * handing this area a new one, and it takes over - the two are only told apart here.
      */
     private ItemStack lastAreaPattern;
+    /**
+     * True while the edit slot has been empty at some point since the area was last filled, i.e. since
+     * the player last took a pattern out of it. What is in the slot afterwards was put there by hand -
+     * or pulled out of the pattern cache by the player - so it is a pattern to open even when it happens
+     * to be byte-identical to the one the area was filled from (dropping the same pattern back in to
+     * start over). Without this the hold-back below kept the previous pattern's cells on screen until
+     * the terminal was reopened, which reset the guards the only way it could.
+     */
+    private boolean editSlotEmptied;
     /** A pattern the edit slot offered while the area was busy - opened once the area is emptied. */
     private ItemStack pendingEditSlotLoad;
     /**
@@ -233,26 +244,12 @@ public class ContainerComprehensiveWorkTerminal extends BasePatternContainerMoni
         // The pattern management area lists the network's pattern providers through AE2's own
         // interface terminal, exactly like the wireless dual-interface terminal does: this terminal's
         // host is a WirelessDualInterfaceTerminalInventory, which implements IInterfaceTerminal.
-        // TEMP DIAGNOSTIC (1.0.35, remove once the terminal-open delay is pinned down).
-        final long diagT0 = System.currentTimeMillis();
         this.providerRegistry = monitorable instanceof IInterfaceTerminal anchor
             ? new ContainerInterfaceTerminal(ip, anchor)
             : null;
-        cpw.mods.fml.common.FMLLog.info(
-            "[wtct-diag] server providerRegistry ctor took %dms t=%d thread=%s",
-            System.currentTimeMillis() - diagT0,
-            diagT0,
-            Thread.currentThread()
-                .getName());
         this.providerSlotSync = new ProviderSlotSync(this.providerRegistry);
         // Last: the layout the first frame is drawn with has to be the real one.
         this.seedOptionsFromHost();
-        cpw.mods.fml.common.FMLLog.info(
-            "[wtct-diag] server container ctor total %dms t=%d thread=%s",
-            System.currentTimeMillis() - diagT0,
-            diagT0,
-            Thread.currentThread()
-                .getName());
     }
 
     /**
@@ -1383,24 +1380,9 @@ public class ContainerComprehensiveWorkTerminal extends BasePatternContainerMoni
         // TODO(pattern cache batch): pull blank patterns from the ME network into the given slot.
     }
 
-    // TEMP DIAGNOSTIC (1.0.41, remove once the terminal delay is pinned down): how much of each tick
-    // this container spends, split by part. Measure only - nothing here changes behaviour.
-    private long diagLoads;
-    private long diagTicks;
-    private long diagTicksTotal;
-    private long diagTicksMax;
-    private long diagEditTotal;
-    private long diagProviderTotal;
-    private long diagSuperTotal;
-    private long diagSuperMax;
-
     /** Mirrors the mode the host stores, which the "PatternTerminal.CraftMode" packet updates. */
     @Override
     public void detectAndSendChanges() {
-        final long diagT0 = System.currentTimeMillis();
-        long tEdit = 0;
-        long tProvider = 0;
-        long tSuper = 0;
         if (this.it != null) {
             if (appeng.util.Platform.isServer()) {
                 // Mirrored from the host on the server only. The client's own terminal object is a
@@ -1422,7 +1404,6 @@ public class ContainerComprehensiveWorkTerminal extends BasePatternContainerMoni
                 this.mgmtShowSlots = this.it.isPatternManagementShowSlots();
                 this.mgmtSearchMode = this.it.getPatternManagementSearchMode();
                 this.mgmtExpanded = this.it.isPatternManagementExpanded();
-                final long t1 = System.currentTimeMillis();
                 this.loadEditSlotPattern();
                 this.openPendingEditSlotPatternIfAreaFree();
                 // The craftable markers need the network's WHOLE craftable list - the client repo is
@@ -1431,10 +1412,8 @@ public class ContainerComprehensiveWorkTerminal extends BasePatternContainerMoni
                 // The Ctrl+hammer's crafts beyond the one the confirm screen started are submitted here,
                 // as their plans come back - the player lands on this container the moment they confirm.
                 this.submitApprovedJobs(this.getPlayerInv().player);
-                tEdit = System.currentTimeMillis() - t1;
             }
         }
-        final long t2 = System.currentTimeMillis();
         if (this.providerRegistry != null) {
             // Contents first: whatever the list has not been told about is queued in the registry's own
             // packet, which the call below then ships.
@@ -1443,51 +1422,14 @@ public class ContainerComprehensiveWorkTerminal extends BasePatternContainerMoni
             // pushes them to the client, which is what keeps the management list in step.
             this.providerRegistry.detectAndSendChanges();
         }
-        tProvider = System.currentTimeMillis() - t2;
         this.updateCraftingPreview();
-        final long t3 = System.currentTimeMillis();
         super.detectAndSendChanges();
-        tSuper = System.currentTimeMillis() - t3;
-        this.diagTick(diagT0, tEdit, tProvider, tSuper);
     }
 
     /**
-     * TEMP DIAGNOSTIC (1.0.41): prints a tick that cost real time, and a running summary every 100
      * ticks so a session where every tick is merely "a bit slow" is still visible. Remove with the
      * rest once the terminal delay is pinned down.
      */
-    private void diagTick(final long tickStart, final long edit, final long provider, final long sup) {
-        final long total = System.currentTimeMillis() - tickStart;
-        this.diagTicks++;
-        this.diagTicksTotal += total;
-        this.diagEditTotal += edit;
-        this.diagProviderTotal += provider;
-        this.diagSuperTotal += sup;
-        if (total > this.diagTicksMax) this.diagTicksMax = total;
-        if (sup > this.diagSuperMax) this.diagSuperMax = sup;
-        if (total >= 3L) {
-            cpw.mods.fml.common.FMLLog.info(
-                "[wtct-diag] server slow tick total=%dms edit=%d provider=%d super=%d t=%d",
-                total,
-                edit,
-                provider,
-                sup,
-                tickStart);
-        }
-        if (this.diagTicks % 100 == 0) {
-            cpw.mods.fml.common.FMLLog.info(
-                "[wtct-diag] server tick summary ticks=%d avg=%dms max=%dms editAvg=%dms providerAvg=%dms superAvg=%dms superMax=%dms loads=%d t=%d",
-                this.diagTicks,
-                this.diagTicksTotal / this.diagTicks,
-                this.diagTicksMax,
-                this.diagEditTotal / this.diagTicks,
-                this.diagProviderTotal / this.diagTicks,
-                this.diagSuperTotal / this.diagTicks,
-                this.diagSuperMax,
-                this.diagLoads,
-                tickStart);
-        }
-    }
 
     // ---------------------------------------------------------------------------------------------
     // Pattern management area (WCWT 样板管理区): the network's pattern providers, i.e. AE2's
@@ -1560,10 +1502,6 @@ public class ContainerComprehensiveWorkTerminal extends BasePatternContainerMoni
         if (this.it != null) {
             this.it.setPatternManagementExpanded(expanded);
             this.it.saveSettings();
-            // Diagnostic: confirms the flip reached the server and was written to the item. Remove once
-            // the reopen behaviour is settled.
-            cpw.mods.fml.common.FMLLog
-                .info("[wtct] management-expand set to %s and saved to the terminal item", expanded);
         }
     }
 
@@ -2358,14 +2296,27 @@ public class ContainerComprehensiveWorkTerminal extends BasePatternContainerMoni
      */
     private void loadEditSlotPattern() {
         final ItemStack pattern = this.patternSlotOUT.getStack();
+        if (pattern == null) {
+            // The player took the pattern out. Whatever lands in the slot next is therefore something
+            // the player chose - a pattern from the cache, or one carried here by hand - and it is
+            // opened even if it is byte-identical to the one the area was last filled from; see
+            // editSlotEmptied.
+            this.lastEditSlotPattern = null;
+            this.editSlotEmptied = true;
+            return;
+        }
         if (ItemStack.areItemStacksEqual(pattern, this.lastEditSlotPattern)) {
             return;
         }
         // Remembered before anything is written: the writes below change slots, which re-enters
         // detectAndSendChanges().
-        this.lastEditSlotPattern = pattern == null ? null : pattern.copy();
-
-        if (pattern == null) {
+        this.lastEditSlotPattern = pattern.copy();
+        // Nothing to do when the area already holds exactly this pattern: rewriting it clears and refills
+        // every cell and pushes them all to the client for no visible change at all. A repeated load is
+        // not free - it is what made the grid flash while something else kept reopening the terminal.
+        if (ItemStack.areItemStacksEqual(pattern, this.lastAreaPattern)
+            && this.lastLoadedArea != null
+            && this.lastLoadedArea.equals(java.util.Arrays.toString(this.cellSnapshot()))) {
             return;
         }
         // The editing area as the player left it. When it no longer holds what the last load put
@@ -2376,24 +2327,28 @@ public class ContainerComprehensiveWorkTerminal extends BasePatternContainerMoni
         // one - pulled out of the pattern cache, or dropped into the slot by hand - and it takes the
         // area over; holding that back as well left the previous encoding's cells sitting there, so
         // the new pattern never appeared.
+        //
+        // The one case that must not be held back is the slot having been emptied since the area was
+        // filled: whatever is in it now came from the player, so it is opened even when it is the very
+        // same pattern - see editSlotEmptied.
         final String area = java.util.Arrays.toString(this.cellSnapshot());
-        if (this.lastLoadedArea != null && !this.lastLoadedArea.equals(area)
+        if (!this.editSlotEmptied && this.lastLoadedArea != null
+            && !this.lastLoadedArea.equals(area)
             && ItemStack.areItemStacksEqual(pattern, this.lastAreaPattern)) {
             this.pendingEditSlotLoad = pattern.copy();
             return;
         }
         this.pendingEditSlotLoad = null;
+        this.editSlotEmptied = false;
         final NBTTagCompound tag = pattern.getTagCompound();
         if (tag == null || !(pattern.getItem() instanceof ICraftingPatternItem)) {
             return;
         }
-        final long diagT0 = System.currentTimeMillis();
         final List<List<ItemStack>> cells = PatternScaling.readPatternCells(pattern);
         if (cells == null) {
             return;
         }
         final boolean crafting = tag.getBoolean("crafting");
-        final long dParse = System.currentTimeMillis();
 
         // The encoder's cells are backed by ItemBiggerAppEngInventory, whose every slot write serialises
         // the whole encoding area into the terminal item's NBT and writes that item back into the player's
@@ -2405,11 +2360,8 @@ public class ContainerComprehensiveWorkTerminal extends BasePatternContainerMoni
         beginInventoryBatch(craftingEx);
         beginInventoryBatch(outputEx);
         final List<ItemStack> inputs = cells.get(0);
-        long dClear;
-        long dFill;
         try {
             this.clearEncodingArea();
-            dClear = System.currentTimeMillis();
             if (crafting) {
                 for (int i = 0; i < CRAFTING_MATRIX; i++) {
                     this.encodingSlots[i].putStack(withAmount(cellAt(inputs, i), 1));
@@ -2424,14 +2376,11 @@ public class ContainerComprehensiveWorkTerminal extends BasePatternContainerMoni
                 }
             }
         } finally {
-            dFill = System.currentTimeMillis();
             endInventoryBatch(craftingEx);
             endInventoryBatch(outputEx);
         }
         this.setCraftingMode(crafting);
-        final long dMode = System.currentTimeMillis();
         this.restoreEncodingOptions(tag);
-        final long dOpts = System.currentTimeMillis();
         if (crafting) {
             // The pattern states its own result, so the preview does not have to be matched against the
             // vanilla recipe list. That scan - tens of thousands of entries, and a full 3x3 makes every
@@ -2446,27 +2395,13 @@ public class ContainerComprehensiveWorkTerminal extends BasePatternContainerMoni
         // pipeline a second time on every load.
         // The area is now exactly this pattern - that is the state a later edit-slot change can open
         // over again without costing anybody their work.
-        final long dSeed = System.currentTimeMillis();
         this.lastLoadedArea = java.util.Arrays.toString(this.cellSnapshot());
-        final long dSnap = System.currentTimeMillis();
         this.lastAreaPattern = pattern.copy();
-        final long dCopy = System.currentTimeMillis();
-        this.diagLoads++;
-        cpw.mods.fml.common.FMLLog.info(
-            "[wtct-diag] server pattern load took=%dms parse=%d clear=%d fill=%d mode=%d opts=%d seed=%d snap=%d copy=%d crafting=%s inputs=%d total=%d t=%d",
-            dCopy - diagT0,
-            dParse - diagT0,
-            dClear - dParse,
-            dFill - dClear,
-            dMode - dFill,
-            dOpts - dMode,
-            dSeed - dOpts,
-            dSnap - dSeed,
-            dCopy - dSnap,
-            crafting,
-            inputs.size(),
-            this.diagLoads,
-            diagT0);
+        // The client only learns about the cells through the window, and this rewrite has been seen to
+        // miss that route - so it is sent by hand here; see resendEncodingArea.
+        if (this.getPlayerInv().player instanceof final EntityPlayerMP player) {
+            this.resendEncodingArea(player);
+        }
     }
 
     /**
@@ -2487,6 +2422,40 @@ public class ContainerComprehensiveWorkTerminal extends BasePatternContainerMoni
     }
 
     /**
+     * Pushes the encoding area to one player's client right now.
+     *
+     * <p>
+     * The area is written on the server - by a load, by an NEI transfer, by the encoder - and the client
+     * is supposed to learn about it from the container's slot diff. That diff does not carry these cells
+     * reliably: they are fake slots over inventories the host keeps inside the terminal item, and a
+     * server-side rewrite of them has been observed to reach the client only when the window is
+     * reopened - which is exactly why a pattern dropped into the edit slot only appeared after the
+     * terminal had been closed and opened again. Sending the cells by hand, and putting the same stacks
+     * into the container's own copy of what the client was told, closes that gap without touching the
+     * diff.
+     */
+    private void resendEncodingArea(final EntityPlayerMP player) {
+        for (final SlotFake cell : this.cellSlots()) {
+            if (cell == null) {
+                continue;
+            }
+            final ItemStack stack = cell.getStack();
+            player.playerNetServerHandler.sendPacket(new S2FPacketSetSlot(this.windowId, cell.slotNumber, stack));
+            if (cell.slotNumber >= 0 && cell.slotNumber < this.inventoryItemStacks.size()) {
+                this.inventoryItemStacks.set(cell.slotNumber, stack == null ? null : stack.copy());
+            }
+        }
+    }
+
+    /** The encoder's own cells: the inputs first, then the outputs. */
+    private SlotFake[] cellSlots() {
+        final SlotFake[] cells = new SlotFake[this.encodingSlots.length + this.outputSlots.length];
+        System.arraycopy(this.encodingSlots, 0, cells, 0, this.encodingSlots.length);
+        System.arraycopy(this.outputSlots, 0, cells, this.encodingSlots.length, this.outputSlots.length);
+        return cells;
+    }
+
+    /**
      * Opens the pattern the edit slot offered while the area still held the player's work, once the
      * area has been emptied by hand. This is the only way a held-back load ever comes through, so no
      * pattern is dropped without the player being able to reach it.
@@ -2502,8 +2471,10 @@ public class ContainerComprehensiveWorkTerminal extends BasePatternContainerMoni
         }
         this.pendingEditSlotLoad = null;
         // Forcing the loader to take the edit slot's pattern again: the guard below compares against
-        // an area snapshot, and the area it will load over is this empty one.
+        // an area snapshot, and the area it will load over is this empty one. The slot was emptied by
+        // hand to get here, so the pattern in it is the player's as well.
         this.lastEditSlotPattern = null;
+        this.editSlotEmptied = true;
         this.lastLoadedArea = java.util.Arrays.toString(this.cellSnapshot());
     }
 
@@ -2535,6 +2506,22 @@ public class ContainerComprehensiveWorkTerminal extends BasePatternContainerMoni
         final ItemStack copy = stack.copy();
         copy.stackSize = amount;
         return copy;
+    }
+
+    /**
+     * Whether an encode should write a hot ingot as the ingot it cools into.
+     *
+     * <p>
+     * The switch is one of the terminal's own settings - the settings screen writes it to the terminal
+     * item's NBT (see {@code ContainerWcwtSettings.KEY_HOT_INGOT_TO_COLD}), the same stack this container
+     * was opened from - so it is read here rather than mirrored into a field: the two screens can be open
+     * one after the other, and the terminal the player carries is the one that decides.
+     */
+    private boolean hotIngotToColdEnabled() {
+        final ItemStack terminal = this.it instanceof final appeng.api.implementations.guiobjects.IGuiItemObject gui
+            ? gui.getItemStack()
+            : null;
+        return ContainerWcwtSettings.isOn(terminal, ContainerWcwtSettings.KEY_HOT_INGOT_TO_COLD);
     }
 
     /**
@@ -2619,11 +2606,18 @@ public class ContainerComprehensiveWorkTerminal extends BasePatternContainerMoni
         final NBTTagList tagIn = new NBTTagList();
         final NBTTagList tagOut = new NBTTagList();
         final boolean fluidAsStack = !this.craftingMode;
+        // The optional "encode hot ingots as the ingot they cool into" rewrite: it changes what the
+        // pattern asks for, not what the editing area shows, so the two lists are mapped on the way into
+        // the tag - the cells keep the stacks the player put there (and a re-load of the pattern puts
+        // the cooled ones in, which is the same state the pattern really stands for).
+        final boolean coolHotIngots = this.hotIngotToColdEnabled();
         for (final ItemStack stack : in) {
-            tagIn.appendTag(PatternScaling.patternEntry(stack, fluidAsStack));
+            tagIn.appendTag(
+                PatternScaling.patternEntry(coolHotIngots ? GTUtil.cooledIngot(stack) : stack, fluidAsStack));
         }
         for (final ItemStack stack : out) {
-            tagOut.appendTag(PatternScaling.patternEntry(stack, fluidAsStack));
+            tagOut.appendTag(
+                PatternScaling.patternEntry(coolHotIngots ? GTUtil.cooledIngot(stack) : stack, fluidAsStack));
         }
         value.setTag("in", tagIn);
         value.setTag("out", tagOut);
@@ -2972,24 +2966,12 @@ public class ContainerComprehensiveWorkTerminal extends BasePatternContainerMoni
     }
 
     private ItemStack findCraftingResult() {
-        final long diagT0 = System.currentTimeMillis();
         final InventoryCrafting ic = new InventoryCrafting(new ContainerNull(), 3, 3);
         for (int i = 0; i < 9; i++) {
             ic.setInventorySlotContents(i, this.encodingSlots[i].getStack());
         }
         final ItemStack result = CraftingManager.getInstance()
             .findMatchingRecipe(ic, this.getPlayerInv().player.worldObj);
-        final long diagMs = System.currentTimeMillis() - diagT0;
-        if (diagMs >= 3L) {
-            // TEMP DIAGNOSTIC (1.0.41): findMatchingRecipe walks the whole GTNH recipe list, so this is
-            // the scan the encoding area pays for every time its matrix changes.
-            cpw.mods.fml.common.FMLLog.info(
-                "[wtct-diag] %s findCraftingResult took=%dms result=%s t=%d",
-                appeng.util.Platform.isServer() ? "server" : "client",
-                diagMs,
-                result,
-                diagT0);
-        }
         return result;
     }
 

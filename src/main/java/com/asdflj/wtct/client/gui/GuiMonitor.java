@@ -379,22 +379,6 @@ public abstract class GuiMonitor extends BaseMEGui implements IConfigManagerHost
     @Override
     public void initGui() {
         Keyboard.enableRepeatEvents(true);
-        // TEMP DIAGNOSTIC (1.0.36, remove once the terminal-open delay is pinned down).
-        final StackTraceElement[] st = new Exception().getStackTrace();
-        final StringBuilder callers = new StringBuilder();
-        for (int i = 1; i < Math.min(st.length, 5); i++) {
-            callers.append(st[i].getClassName())
-                .append('.')
-                .append(st[i].getMethodName())
-                .append(' ');
-        }
-        cpw.mods.fml.common.FMLLog.info(
-            "[wtct-diag] client initGui begin t=%d thread=%s gui=%s callers: %s",
-            System.currentTimeMillis(),
-            Thread.currentThread()
-                .getName(),
-            Integer.toHexString(System.identityHashCode(this)),
-            callers);
         // The item and fluid lists are pushed while the container is still opening - and now from
         // InventoryHandler.getServerGuiElement, which FML runs before it sends the open-window packet,
         // so they reach the client before this screen and are parked rather than dropped. Apply the

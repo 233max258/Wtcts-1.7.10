@@ -33,7 +33,7 @@ import appeng.client.gui.AEBaseGui;
  * <p>
  * Rows: the reference's pick-block / craft-if-missing / restock trio first (the port's own block
  * picker is the pick-block switch, and the other two are switches without behaviour behind them
- * yet), then the port's larger-counts and crafting-pin switches, then the upload pair, then the
+ * yet), then the port's larger-counts and crafting-pin switches, then the upload group, then the
  * magnet group. As in the reference, "缺货自动制作" is dead while "启用选取方块" is off. The
  * reference screen has no slots at all, so the player's rows are parked off-screen instead of being
  * drawn over the panel.
@@ -41,7 +41,7 @@ import appeng.client.gui.AEBaseGui;
 public class GuiWcwtSettings extends AEBaseGui {
 
     private static final int PANEL_W = 200;
-    private static final int PANEL_H = 228;
+    private static final int PANEL_H = 244;
     /** Palette of the terminal's own panel: face, frame, outer line. */
     private static final int FACE = 0xFFCBCBD4;
     private static final int FRAME = 0xFF413F54;
@@ -73,14 +73,16 @@ public class GuiWcwtSettings extends AEBaseGui {
      * The upload group: every switch here is about what an encode does with its finished pattern or with
      * the amounts it was built from. "Only a unique provider name" is the gate, "circuit always one"
      * decides what a multiply may touch, and "stash ambiguous uploads" decides where a pattern that did
-     * not name one provider goes - the three read in the order the upload meets them.
+     * not name one provider goes - the three read in the order the upload meets them. "Hot ingots as
+     * their cooled ingot" is the last of them: it rewrites what the entries hold, not where they go.
      */
     private static final int UPLOAD_GROUP_TITLE_Y = 137;
     private static final int ROW_UPLOAD_UNIQUE_Y = 147;
     private static final int ROW_CIRCUIT_ONE_Y = 163;
     private static final int ROW_STASH_Y = 179;
-    private static final int MAGNET_GROUP_TITLE_Y = 195;
-    private static final int ROW_MAGNET_Y = 205;
+    private static final int ROW_HOT_INGOT_Y = 195;
+    private static final int MAGNET_GROUP_TITLE_Y = 211;
+    private static final int ROW_MAGNET_Y = 221;
     /** The label sits 4px past the switch and is centred on it, as the reference puts it. */
     private static final int LABEL_DX = 26;
     private static final int LABEL_DY = 2;
@@ -103,6 +105,7 @@ public class GuiWcwtSettings extends AEBaseGui {
     private GuiWcwtCheckbox uploadUniqueToggle;
     private GuiWcwtCheckbox circuitOneToggle;
     private GuiWcwtCheckbox stashToggle;
+    private GuiWcwtCheckbox hotIngotToggle;
     private GuiWcwtCheckbox magnetToggle;
     private GuiWcwtBackButton backButton;
 
@@ -156,6 +159,8 @@ public class GuiWcwtSettings extends AEBaseGui {
         this.circuitOneToggle.setTooltip(StatCollector.translateToLocal("wtct.settings.circuit_one.desc"));
         this.buttonList.add(this.stashToggle = new GuiWcwtCheckbox(left + ROW_X, top + ROW_STASH_Y));
         this.stashToggle.setTooltip(StatCollector.translateToLocal("wtct.settings.stash.desc"));
+        this.buttonList.add(this.hotIngotToggle = new GuiWcwtCheckbox(left + ROW_X, top + ROW_HOT_INGOT_Y));
+        this.hotIngotToggle.setTooltip(StatCollector.translateToLocal("wtct.settings.hot_ingot_to_cold.desc"));
         this.buttonList.add(this.magnetToggle = new GuiWcwtCheckbox(left + ROW_X, top + ROW_MAGNET_Y));
         this.magnetToggle.setTooltip(StatCollector.translateToLocal("wtct.settings.magnet_card.desc"));
         // Back tab: AE2 1.21's 20x20 tab plate with its back arrow on it - the icon every screen of this
@@ -176,6 +181,7 @@ public class GuiWcwtSettings extends AEBaseGui {
         this.uploadUniqueToggle.setChecked(this.container.isEnabled(ContainerWcwtSettings.KEY_UPLOAD_UNIQUE_MATCH));
         this.circuitOneToggle.setChecked(this.container.isEnabled(ContainerWcwtSettings.KEY_CIRCUIT_ALWAYS_ONE));
         this.stashToggle.setChecked(this.container.isEnabled(ContainerWcwtSettings.KEY_STASH_AMBIGUOUS));
+        this.hotIngotToggle.setChecked(this.container.isEnabled(ContainerWcwtSettings.KEY_HOT_INGOT_TO_COLD));
         this.magnetToggle.setChecked(this.container.isEnabled(ContainerWcwtSettings.KEY_MAGNET_CARD));
         // The reference's one dependency: craft-if-missing has nothing to follow while the player
         // cannot pick blocks in the first place.
@@ -206,6 +212,7 @@ public class GuiWcwtSettings extends AEBaseGui {
         this.drawRowLabel("wtct.settings.upload_unique", ROW_UPLOAD_UNIQUE_Y, true);
         this.drawRowLabel("wtct.settings.circuit_one", ROW_CIRCUIT_ONE_Y, true);
         this.drawRowLabel("wtct.settings.stash", ROW_STASH_Y, true);
+        this.drawRowLabel("wtct.settings.hot_ingot_to_cold", ROW_HOT_INGOT_Y, true);
         this.drawRowLabel("wtct.settings.magnet_card", ROW_MAGNET_Y, true);
         GL11.glColor4f(1.0F, 1.0F, 1.0F, 1.0F);
     }
@@ -265,6 +272,8 @@ public class GuiWcwtSettings extends AEBaseGui {
             key = ContainerWcwtSettings.KEY_BIG_COUNTS;
         } else if (button == this.stashToggle) {
             key = ContainerWcwtSettings.KEY_STASH_AMBIGUOUS;
+        } else if (button == this.hotIngotToggle) {
+            key = ContainerWcwtSettings.KEY_HOT_INGOT_TO_COLD;
         } else if (button == this.clearGridToggle) {
             key = ContainerWcwtSettings.KEY_CLEAR_GRID_ON_CLOSE;
         } else if (button == this.uploadUniqueToggle) {

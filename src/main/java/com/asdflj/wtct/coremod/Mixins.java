@@ -43,6 +43,7 @@ public enum Mixins implements IMixins {
             "nei.MixinPanelWidget",
             "nei.MixinRecipeHandlerRef",
             "nei.MixinRecipeInfo",
+            "nei.MixinStackInfo",
             "nei.MixinRecipeItemInputHandler")
         .addRequiredMod(Mods.NOT_ENOUGH_ITEMS)
         .setPhase(Phase.LATE)),

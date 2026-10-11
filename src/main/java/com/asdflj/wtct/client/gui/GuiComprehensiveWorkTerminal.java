@@ -1344,9 +1344,6 @@ public class GuiComprehensiveWorkTerminal extends GuiMonitor implements IInterfa
      */
     @Override
     public void drawScreen(final int mouseX, final int mouseY, final float partialTicks) {
-        // TEMP DIAGNOSTIC (1.0.37, remove once the terminal-open delay is pinned down).
-        final boolean diag = this.diagFrames < 30;
-        final long diagT0 = System.currentTimeMillis();
         final TerminalFontSize configured = AEConfig.instance.getTerminalFontSize();
         final boolean lend = this.bigCounts() && configured != TerminalFontSize.LARGE;
         if (lend) {
@@ -1357,28 +1354,6 @@ public class GuiComprehensiveWorkTerminal extends GuiMonitor implements IInterfa
         } finally {
             if (lend) {
                 AEConfig.instance.settings.putSetting(Settings.TERMINAL_FONT_SIZE, configured);
-            }
-            if (diag) {
-                cpw.mods.fml.common.FMLLog.info(
-                    "[wtct-diag] client drawScreen frame=%d took=%dms t=%d",
-                    this.diagFrames,
-                    System.currentTimeMillis() - diagT0,
-                    diagT0);
-                this.diagFrames++;
-            }
-            // TEMP DIAGNOSTIC (1.0.41, remove with the rest): beyond the first 30 frames a running
-            // frame summary, so a steady state that is merely slow shows up too.
-            final long diagFrameMs = System.currentTimeMillis() - diagT0;
-            this.diagAllFrames++;
-            this.diagAllTotal += diagFrameMs;
-            if (diagFrameMs > this.diagAllMax) this.diagAllMax = diagFrameMs;
-            if (this.diagAllFrames % 100 == 0) {
-                cpw.mods.fml.common.FMLLog.info(
-                    "[wtct-diag] client frame summary frames=%d avg=%dms max=%dms t=%d",
-                    this.diagAllFrames,
-                    this.diagAllTotal / this.diagAllFrames,
-                    this.diagAllMax,
-                    diagT0);
             }
         }
     }
@@ -2227,9 +2202,6 @@ public class GuiComprehensiveWorkTerminal extends GuiMonitor implements IInterfa
 
     @Override
     public void drawFG(final int offsetX, final int offsetY, final int mouseX, final int mouseY) {
-        // TEMP DIAGNOSTIC (1.0.37, remove once the terminal-open delay is pinned down).
-        final boolean diag = this.diagFgs < 3;
-        final long diagT0 = diag ? System.currentTimeMillis() : 0;
         // WCWT's screen JSON titles the screen "comprehensive_work_area" (its terminal item name) in the
         // header. Left 8 of the raw panel would sit under the sidebar's plates, so the text starts just
         // past them - in the reference screenshot the full title is visible right of the toolbar.
@@ -2281,14 +2253,6 @@ public class GuiComprehensiveWorkTerminal extends GuiMonitor implements IInterfa
         // Same reason as in drawBG: the tooltip's gradient rects leave a dark glColor behind, and
         // whatever draws next (NEI included) would inherit it.
         GL11.glColor4f(1.0F, 1.0F, 1.0F, 1.0F);
-        if (diag) {
-            cpw.mods.fml.common.FMLLog.info(
-                "[wtct-diag] client drawFG call=%d took=%dms t=%d",
-                this.diagFgs,
-                System.currentTimeMillis() - diagT0,
-                diagT0);
-            this.diagFgs++;
-        }
     }
 
     // ---------------------------------------------------------------------------------------------
@@ -2750,11 +2714,15 @@ public class GuiComprehensiveWorkTerminal extends GuiMonitor implements IInterfa
         for (final SlotFake slot : this.monitorableContainer.getOutputSlots()) {
             this.drawCraftableMarker(slot);
         }
+        // Crafting mode's recipe preview: the pattern's output shows nowhere else while the pattern is
+        // being built, so that cell carries the badge like the processing outputs do. In processing
+        // mode the slot is parked off-screen and the position check skips it.
+        this.drawCraftableMarker(this.monitorableContainer.getCraftingResultSlot());
         GL11.glColor4f(1.0F, 1.0F, 1.0F, 1.0F);
     }
 
     /** The badge on one cell. */
-    private void drawCraftableMarker(final SlotFake slot) {
+    private void drawCraftableMarker(final Slot slot) {
         final ItemStack stack = slot.getStack();
         if (stack == null || slot.xDisplayPosition < 0 || slot.yDisplayPosition < 0) {
             return;
@@ -2804,7 +2772,7 @@ public class GuiComprehensiveWorkTerminal extends GuiMonitor implements IInterfa
      * cell's contents or the network's list do, so it is remembered against the exact stack it was worked
      * out from, and the whole cache is dropped whenever either of those arrives.
      */
-    private boolean slotCraftable(final SlotFake slot, final ItemStack stack) {
+    private boolean slotCraftable(final Slot slot, final ItemStack stack) {
         final CachedCraftable cached = this.craftableMarks.get(slot);
         if (cached != null && ItemStack.areItemStacksEqual(cached.stack, stack)) {
             return cached.craftable;
@@ -3161,15 +3129,7 @@ public class GuiComprehensiveWorkTerminal extends GuiMonitor implements IInterfa
      * network's storage list or its craftable-key set arrives - the two things a remembered answer can
      * be invalidated by; see {@link #slotCraftable}.
      */
-    private final java.util.IdentityHashMap<SlotFake, CachedCraftable> craftableMarks = new java.util.IdentityHashMap<>();
-
-    // TEMP DIAGNOSTIC counters (1.0.37, remove once the terminal-open delay is pinned down).
-    private int diagFrames;
-    private int diagAllFrames;
-    private long diagAllTotal;
-    private long diagAllMax;
-    private int diagBgs;
-    private int diagFgs;
+    private final java.util.IdentityHashMap<Slot, CachedCraftable> craftableMarks = new java.util.IdentityHashMap<>();
 
     /** Server push (SPacketCraftableKeys): the network's complete craftable-key set. */
     public void postCraftableKeys(final int[] keys) {
@@ -3397,9 +3357,6 @@ public class GuiComprehensiveWorkTerminal extends GuiMonitor implements IInterfa
 
     @Override
     public void drawBG(int offsetX, int offsetY, int mouseX, int mouseY) {
-        // TEMP DIAGNOSTIC (1.0.37, remove once the terminal-open delay is pinned down).
-        final boolean diag = this.diagBgs < 3;
-        final long diagT0 = diag ? System.currentTimeMillis() : 0;
         // Re-place the cache slots from the current state, before anything draws. This has to happen
         // here and every frame, not just when the enlargement switch flips: the slots are positioned
         // by their xDisplayPosition/yDisplayPosition, which vanilla consumes when it renders them
@@ -3510,12 +3467,6 @@ public class GuiComprehensiveWorkTerminal extends GuiMonitor implements IInterfa
         // without resetting it, so the leftover colour dims everything it draws. Hand control on
         // with a clean state instead.
         GL11.glColor4f(1.0F, 1.0F, 1.0F, 1.0F);
-        if (diag) {
-            cpw.mods.fml.common.FMLLog.info(
-                "[wtct-diag] client drawBG call=%d took=%dms t=%d",
-                this.diagBgs, System.currentTimeMillis() - diagT0, diagT0);
-            this.diagBgs++;
-        }
     }
 
     /**
@@ -3774,7 +3725,22 @@ public class GuiComprehensiveWorkTerminal extends GuiMonitor implements IInterfa
          * stays out of this one too.
          */
         private boolean terminalVisible = true;
+        /**
+         * Set only on the merged molecular assembler entry: the machines whose cells it holds, in the
+         * order their slots were laid into {@link #slots}. Every other provider, and a group of one,
+         * leaves this empty - see {@code mergeMolecularAssemblers}.
+         */
+        private PatternProvider[] mergedMembers = NO_PROVIDERS;
+        /** For each of {@link #slots}, which member of {@link #mergedMembers} it came from. */
+        private int[] mergedOwner = NO_CELLS;
+        /** For each of {@link #slots}, that member's own slot index. */
+        private int[] mergedSlot = NO_CELLS;
     }
+
+    /** The empty member list a provider that is not a merged group carries. */
+    private static final PatternProvider[] NO_PROVIDERS = new PatternProvider[0];
+    /** The empty owner map a provider that is not a merged group carries. */
+    private static final int[] NO_CELLS = new int[0];
 
     /** A list row: either a provider header or one line of its pattern slots. */
     private static final class MgmtRow {
@@ -4015,21 +3981,184 @@ public class GuiComprehensiveWorkTerminal extends GuiMonitor implements IInterfa
         // box still narrows the list down to the provider the mapping points at.
         final String filter = this.resolvedMgmtSearch()
             .toLowerCase(java.util.Locale.ROOT);
-        for (final PatternProvider provider : this.orderedMgmtProviders(filter)) {
-            this.mgmtRows.add(new MgmtRow(provider, HEADER_ROW));
-            // WCWT's show-slots switch: with it off the list keeps only the provider headers.
-            if (this.mgmtShowSlots()) {
-                final int[] shown = displayedMgmtSlots(provider);
-                for (int offset = 0; offset < shown.length; offset += MGMT_COLS) {
-                    this.mgmtRows.add(
-                        new MgmtRow(
-                            provider,
-                            java.util.Arrays.copyOfRange(shown, offset, Math.min(offset + MGMT_COLS, shown.length))));
+        final List<PatternProvider> ordered = this.orderedMgmtProviders(filter);
+        final PatternProvider assemblers = this.mergeMolecularAssemblers(ordered);
+        final boolean group = assemblers != null && assemblers.mergedMembers.length > 0;
+        for (final PatternProvider provider : ordered) {
+            if (group) {
+                // The molecular assemblers are one entry now, standing where the first of them sits;
+                // every later one is already represented by that entry's cells.
+                if (provider == assemblers.mergedMembers[0]) {
+                    this.addMgmtEntry(assemblers);
+                    continue;
+                }
+                if (this.isMolecularAssembler(provider)) {
+                    continue;
                 }
             }
+            this.addMgmtEntry(provider);
         }
         this.mgmtRowsDirty = false;
         this.mgmtSeenSettings = this.mgmtSettings();
+    }
+
+    /** One provider's entry: its header row and, with the show-slots switch on, its cell rows. */
+    private void addMgmtEntry(final PatternProvider provider) {
+        this.mgmtRows.add(new MgmtRow(provider, HEADER_ROW));
+        if (!this.mgmtShowSlots()) {
+            return;
+        }
+        final int[] shown = displayedMgmtSlots(provider);
+        for (int offset = 0; offset < shown.length; offset += MGMT_COLS) {
+            this.mgmtRows.add(
+                new MgmtRow(
+                    provider,
+                    java.util.Arrays.copyOfRange(shown, offset, Math.min(offset + MGMT_COLS, shown.length))));
+        }
+    }
+
+    /**
+     * Lays every molecular assembler of the list into one entry, or null when the list has none.
+     *
+     * <p>
+     * An assembler's cells are the patterns its interfaces pushed in, and none of them can be changed
+     * from here - so a network with a row of assemblers used to repeat the very same header once per
+     * machine (a column of "分子装配室" labels, each with its own handful of cells). AE2's own interface
+     * terminal shows such a row as one block, and that is what this rebuilds: the first machine keeps the
+     * header - its icon, name and buttons, and its identity, so the header's own controls still reach a
+     * real machine - and the slots of every machine behind it follow in one flow of cells. Each cell
+     * remembers the machine it came from, so a click still acts on that machine rather than on the
+     * header's (see {@link #cellOwner}).
+     *
+     * <p>
+     * A single assembler is left exactly as it was: there is nothing to merge, and the plain provider
+     * already is the entry the list wants - its {@code mergedMembers} stays empty.
+     */
+    private PatternProvider mergeMolecularAssemblers(final List<PatternProvider> ordered) {
+        PatternProvider lead = null;
+        int machines = 0;
+        int cells = 0;
+        for (final PatternProvider provider : ordered) {
+            if (!this.isMolecularAssembler(provider)) {
+                continue;
+            }
+            if (lead == null) {
+                lead = provider;
+            }
+            machines++;
+            cells += provider.slots.length;
+        }
+        if (lead == null || machines < 2) {
+            return lead;
+        }
+        final PatternProvider merged = new PatternProvider();
+        merged.id = lead.id;
+        merged.name = lead.name;
+        merged.rawName = lead.rawName;
+        merged.x = lead.x;
+        merged.y = lead.y;
+        merged.z = lead.z;
+        merged.dim = lead.dim;
+        merged.side = lead.side;
+        merged.icon = lead.icon;
+        merged.terminalVisible = lead.terminalVisible;
+        merged.slots = new ItemStack[cells];
+        merged.mergedMembers = new PatternProvider[machines];
+        merged.mergedOwner = new int[cells];
+        merged.mergedSlot = new int[cells];
+        int at = 0;
+        int member = 0;
+        for (final PatternProvider provider : ordered) {
+            if (!this.isMolecularAssembler(provider)) {
+                continue;
+            }
+            merged.mergedMembers[member] = provider;
+            for (int slot = 0; slot < provider.slots.length; slot++) {
+                merged.slots[at] = provider.slots[slot];
+                merged.mergedOwner[at] = member;
+                merged.mergedSlot[at] = slot;
+                at++;
+            }
+            member++;
+        }
+        return merged;
+    }
+
+    /**
+     * The machine a cell of {@code provider} belongs to: the provider itself, or - for the merged
+     * molecular assembler entry - the machine that cell was read from.
+     */
+    private PatternProvider cellOwner(final PatternProvider provider, final int cell) {
+        if (provider.mergedMembers.length == 0 || cell < 0 || cell >= provider.mergedOwner.length) {
+            return provider;
+        }
+        return provider.mergedMembers[provider.mergedOwner[cell]];
+    }
+
+    /**
+     * The cell's own index in the machine that owns it. Only the merged molecular assembler entry needs
+     * this translation - every other provider's cells are already indexed the way its inventory is.
+     */
+    private int cellSlot(final PatternProvider provider, final int cell) {
+        if (provider.mergedMembers.length == 0 || cell < 0 || cell >= provider.mergedSlot.length) {
+            return cell;
+        }
+        return provider.mergedSlot[cell];
+    }
+
+    /**
+     * The machine the merged entry's folded cell hands a pattern to: the first member that still has a
+     * free slot, so the click keeps doing what that cell promises ("put it where there is room"). A
+     * group with no room left falls back to the header's machine.
+     */
+    private PatternProvider insertTarget(final PatternProvider provider) {
+        for (final PatternProvider member : provider.mergedMembers) {
+            for (final ItemStack stack : member.slots) {
+                if (stack == null) {
+                    return member;
+                }
+            }
+        }
+        return provider;
+    }
+
+    /** The molecular assembler's own item, resolved on first use; null when AE2 does not offer it. */
+    private ItemStack molecularAssemblerIcon;
+    private boolean molecularAssemblerIconResolved;
+
+    /**
+     * True for a molecular assembler.
+     *
+     * <p>
+     * A molecular assembler's cells are the patterns its interfaces pushed into it and every one of them
+     * is executed as a crafting recipe, so there is nothing in the grid the player can change. The list
+     * therefore gathers the assemblers into one entry instead of repeating a header per machine - see
+     * {@link #mergeMolecularAssemblers}.
+     *
+     * <p>
+     * Two machines answer to the name, so both are recognised: AE2's own molecular assembler by its
+     * display representation - the same test AE2's interface terminal uses for its "assemblers only"
+     * filter - and GTNL's assembler matrix, whose recipe type is what the list itself prints as
+     * "分子装配室" and which reports its own controller as the icon instead.
+     */
+    private boolean isMolecularAssembler(final PatternProvider provider) {
+        if (provider.rawName != null && provider.rawName.toLowerCase(java.util.Locale.ROOT)
+            .contains("assembler_matrix")) {
+            return true;
+        }
+        if (provider.icon == null) {
+            return false;
+        }
+        if (!this.molecularAssemblerIconResolved) {
+            this.molecularAssemblerIconResolved = true;
+            var assembler = AEApi.instance()
+                .definitions()
+                .blocks()
+                .molecularAssembler()
+                .maybeStack(1);
+            this.molecularAssemblerIcon = assembler.isPresent() ? assembler.get() : null;
+        }
+        return this.molecularAssemblerIcon != null && Platform.isSameItem(this.molecularAssemblerIcon, provider.icon);
     }
 
     /**
@@ -5102,6 +5231,14 @@ public class GuiComprehensiveWorkTerminal extends GuiMonitor implements IInterfa
         final List<String> lines = new ArrayList<>(2);
         if (row.isHeader()) {
             lines.add(row.provider.name);
+            if (row.provider.mergedMembers.length > 1) {
+                // The merged molecular assembler entry stands for a whole row of machines, so the header
+                // has to say so - the coordinates below it name the first of them, not the only one.
+                lines.add(
+                    StatCollector.translateToLocalFormatted(
+                        "wtct.gui.management.merged",
+                        Integer.toString(row.provider.mergedMembers.length)));
+            }
             lines.add(
                 StatCollector.translateToLocalFormatted(
                     "wtct.gui.management.location",
@@ -5335,16 +5472,23 @@ public class GuiComprehensiveWorkTerminal extends GuiMonitor implements IInterfa
             // The provider's empty slots are folded into this one cell, so a click here is aimed at the
             // first slot that is free - which is how a pattern carried on the cursor still goes in with
             // the empty slots collapsed. (WCWT leaves the cell inert, but then only an occupied slot can
-            // be clicked and a pattern can no longer be put in by hand at all.)
-            this.sendMgmtAction("PatternManagement.InsertFirstFree", row.provider.id);
-            this.selectedProviderId = row.provider.id;
+            // be clicked and a pattern can no longer be put in by hand at all.) In the merged assembler
+            // entry that is the first machine with room; see insertTarget.
+            final PatternProvider target = this.insertTarget(row.provider);
+            this.sendMgmtAction("PatternManagement.InsertFirstFree", target.id);
+            this.selectedProviderId = target.id;
             return true;
         }
+        // A cell of the merged assembler entry belongs to the machine it was read from, so the click goes
+        // to that machine - with the index the cell has in that machine's own inventory, which is not the
+        // index it has here; see cellOwner / cellSlot.
+        final PatternProvider owner = this.cellOwner(row.provider, slot);
         final NBTTagCompound tag = new NBTTagCompound();
-        tag.setLong("provider", row.provider.id);
+        tag.setLong("provider", owner.id);
         tag.setBoolean("quick", shift);
-        Wtct.proxy.netHandler.sendToServer(new CPacketTerminalBtns("PatternManagement.SlotAction", slot, tag));
-        this.selectedProviderId = row.provider.id;
+        Wtct.proxy.netHandler.sendToServer(
+            new CPacketTerminalBtns("PatternManagement.SlotAction", this.cellSlot(row.provider, slot), tag));
+        this.selectedProviderId = owner.id;
         return true;
     }
 

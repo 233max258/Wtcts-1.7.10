@@ -147,12 +147,6 @@ public class WirelessDualInterfaceTerminalInventory extends WirelessTerminal imp
         }
         if (data.hasKey("patternManagementExpanded")) {
             this.setPatternManagementExpanded(data.getBoolean("patternManagementExpanded"));
-            // Diagnostic: shows what the terminal item actually carried when the screen was built.
-            // Remove once the reopen behaviour is settled.
-            cpw.mods.fml.common.FMLLog
-                .info("[wtct] terminal item read back management-expand = %s", this.patternManagementExpanded);
-        } else {
-            cpw.mods.fml.common.FMLLog.info("[wtct] terminal item carried no management-expand key");
         }
         this.setPrioritization(data.getBoolean("priorization"));
         this.setInverted(data.getBoolean("inverted"));
@@ -443,14 +437,8 @@ public class WirelessDualInterfaceTerminalInventory extends WirelessTerminal imp
                     }
                     return;
                 }
-                // TEMP DIAGNOSTIC (1.0.38, remove once the terminal-open delay is pinned down).
-                final long diagT0 = System.currentTimeMillis();
                 final ICraftingPatternDetails details = craftingPatternItem
                     .getPatternForItem(is, this.getActionableNode().getWorld());
-                cpw.mods.fml.common.FMLLog.info(
-                    "[wtct-diag] server pattern decode took %dms t=%d thread=%s",
-                    System.currentTimeMillis() - diagT0, diagT0, Thread.currentThread()
-                        .getName());
 
                 if (details != null) {
                     final IAEItemStack[] inItems = details.getInputs();

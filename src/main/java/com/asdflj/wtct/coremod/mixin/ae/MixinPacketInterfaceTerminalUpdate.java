@@ -45,13 +45,6 @@ public abstract class MixinPacketInterfaceTerminalUpdate {
     private void wtct$stashEarlyProviderList(final INetworkInfo network, final AppEngPacket packet,
         final EntityPlayer player, final CallbackInfo ci) {
         if (!(Minecraft.getMinecraft().currentScreen instanceof IInterfaceTerminalPostUpdate)) {
-            // TEMP DIAGNOSTIC (1.0.35, remove once the terminal-open delay is pinned down).
-            cpw.mods.fml.common.FMLLog.info(
-                "[wtct-diag] client iface list STASHED commands=%d t=%d thread=%s",
-                this.commands.size(),
-                System.currentTimeMillis(),
-                Thread.currentThread()
-                    .getName());
             EarlyTerminalLists.stashInterfaceUpdate(this.commands, this.statusFlags);
             ci.cancel();
         }
